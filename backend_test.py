@@ -236,6 +236,195 @@ class HRMSAPITester:
             
         return success1 and success2
 
+    def test_indian_tax_calculator(self):
+        """Test Indian tax calculator API"""
+        success, response = self.run_test(
+            "Indian Tax Calculator",
+            "POST",
+            "tax/calculate?basic=30000&hra=12000&da=5000&other=3000",
+            200,
+            token=self.admin_token
+        )
+        
+        if success:
+            required_fields = ['earnings', 'deductions', 'net_salary', 'ctc_monthly', 'ctc_annual']
+            for field in required_fields:
+                if field not in response:
+                    print(f"   Missing field: {field}")
+                    return False
+            
+            # Check earnings structure
+            earnings = response.get('earnings', {})
+            earnings_fields = ['basic_salary', 'hra', 'da', 'other_allowances', 'gross_salary']
+            for field in earnings_fields:
+                if field not in earnings:
+                    print(f"   Missing earnings field: {field}")
+                    return False
+            
+            # Check deductions structure
+            deductions = response.get('deductions', {})
+            deductions_fields = ['pf_employee', 'esic_employee', 'professional_tax', 'tds_monthly', 'total_deductions']
+            for field in deductions_fields:
+                if field not in deductions:
+                    print(f"   Missing deductions field: {field}")
+                    return False
+            
+            print(f"   Gross: ₹{earnings.get('gross_salary')}, Net: ₹{response.get('net_salary')}")
+            print(f"   PF: ₹{deductions.get('pf_employee')}, TDS: ₹{deductions.get('tds_monthly')}")
+        
+        return success
+
+    def test_leave_balance_endpoint(self):
+        """Test leave balance endpoint"""
+        # First get an employee ID
+        success, employees = self.run_test(
+            "Get Employees for Leave Balance",
+            "GET",
+            "employees",
+            200,
+            token=self.admin_token
+        )
+        
+        if not success or not employees:
+            print("   No employees found for leave balance test")
+            return False
+        
+        employee_id = employees[0]['id']
+        success, response = self.run_test(
+            "Leave Balance",
+            "GET",
+            f"leave-balance/{employee_id}",
+            200,
+            token=self.admin_token
+        )
+        
+        if success:
+            balances = response.get('balances', {})
+            if balances:
+                print(f"   Leave types: {list(balances.keys())}")
+                for leave_type, balance in balances.items():
+                    if 'total' in balance and 'used' in balance and 'available' in balance:
+                        print(f"   {leave_type}: {balance['available']}/{balance['total']} available")
+                    else:
+                        print(f"   Missing balance fields for {leave_type}")
+                        return False
+            else:
+                print("   No leave balances found")
+        
+        return success
+
+    def test_leave_policy_endpoint(self):
+        """Test leave policy endpoint"""
+        success, response = self.run_test(
+            "Leave Policy",
+            "GET",
+            "leave-policy",
+            200,
+            token=self.admin_token
+        )
+        
+        if success:
+            expected_types = ['casual', 'sick', 'earned', 'maternity', 'paternity', 'unpaid']
+            for leave_type in expected_types:
+                if leave_type not in response:
+                    print(f"   Missing leave type: {leave_type}")
+                    return False
+            print(f"   Policy: {response}")
+        
+        return success
+
+    def test_notification_system(self):
+        """Test notification system endpoints"""
+        # Test unread count
+        success1, response1 = self.run_test(
+            "Notification Unread Count",
+            "GET",
+            "notifications/unread-count",
+            200,
+            token=self.employee_token
+        )
+        
+        # Test get all notifications
+        success2, response2 = self.run_test(
+            "Get All Notifications",
+            "GET",
+            "notifications",
+            200,
+            token=self.employee_token
+        )
+        
+        if success1:
+            if 'count' not in response1:
+                print("   Missing 'count' field in unread count response")
+                return False
+            print(f"   Unread notifications: {response1['count']}")
+        
+        if success2:
+            print(f"   Total notifications: {len(response2)}")
+        
+        return success1 and success2
+
+    def test_onboarding_checklist(self):
+        """Test onboarding checklist API"""
+        # First get an employee ID
+        success, employees = self.run_test(
+            "Get Employees for Onboarding",
+            "GET",
+            "employees",
+            200,
+            token=self.admin_token
+        )
+        
+        if not success or not employees:
+            print("   No employees found for onboarding test")
+            return False
+        
+        employee_id = employees[0]['id']
+        success, response = self.run_test(
+            "Onboarding Checklist",
+            "GET",
+            f"onboarding/{employee_id}",
+            200,
+            token=self.admin_token
+        )
+        
+        if success:
+            required_fields = ['id', 'employee_id', 'items', 'overall_progress']
+            for field in required_fields:
+                if field not in response:
+                    print(f"   Missing field: {field}")
+                    return False
+            
+            items = response.get('items', [])
+            print(f"   Checklist items: {len(items)}")
+            print(f"   Overall progress: {response.get('overall_progress')}%")
+            
+            # Check item structure
+            if items:
+                item = items[0]
+                item_fields = ['id', 'label', 'category', 'completed']
+                for field in item_fields:
+                    if field not in item:
+                        print(f"   Missing item field: {field}")
+                        return False
+        
+        return success
+
+    def test_password_change(self):
+        """Test password change API"""
+        # Test with incorrect old password
+        success1, _ = self.run_test(
+            "Password Change (Wrong Old Password)",
+            "POST",
+            "auth/change-password?old_password=wrongpass&new_password=newpass123",
+            400,
+            token=self.employee_token
+        )
+        
+        # Note: We won't test successful password change as it would break subsequent tests
+        print("   Password change endpoint accessible (tested with wrong password)")
+        return success1
+
 def main():
     print("🚀 Starting HRMS Backend API Testing...")
     print("=" * 60)
@@ -271,6 +460,17 @@ def main():
     tester.test_attendance_endpoints()
     tester.test_leave_endpoints()
     tester.test_reimbursement_endpoints()
+    
+    # Test Phase 2 features
+    print("\n📋 PHASE 2 FEATURE TESTS")
+    print("-" * 30)
+    
+    tester.test_indian_tax_calculator()
+    tester.test_leave_balance_endpoint()
+    tester.test_leave_policy_endpoint()
+    tester.test_notification_system()
+    tester.test_onboarding_checklist()
+    tester.test_password_change()
     
     # Print final results
     print("\n" + "=" * 60)

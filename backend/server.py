@@ -1,5 +1,6 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -13,6 +14,9 @@ import os
 import logging
 from pathlib import Path
 import uuid
+import requests
+from indian_tax import calculate_full_salary, calculate_pf, calculate_esic, calculate_professional_tax, calculate_income_tax
+from storage import init_storage, put_object, get_object
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -85,7 +89,33 @@ DEFAULT_PERMISSIONS = {
     "performance": True,
     "reimbursements": True,
     "employee_directory": True,
+    "documents": True,
+    "onboarding": True,
 }
+
+# Default leave policy (annual allocation)
+DEFAULT_LEAVE_POLICY = {
+    "casual": 12,
+    "sick": 10,
+    "earned": 15,
+    "maternity": 182,
+    "paternity": 15,
+    "unpaid": 365,
+}
+
+# Onboarding checklist template
+DEFAULT_ONBOARDING_CHECKLIST = [
+    {"id": "doc_aadhaar", "label": "Upload Aadhaar Card", "category": "documents"},
+    {"id": "doc_pan", "label": "Upload PAN Card", "category": "documents"},
+    {"id": "doc_resume", "label": "Upload Resume", "category": "documents"},
+    {"id": "doc_photo", "label": "Upload Passport Photo", "category": "documents"},
+    {"id": "doc_offer", "label": "Sign Offer Letter", "category": "documents"},
+    {"id": "bank_details", "label": "Submit Bank Account Details", "category": "finance"},
+    {"id": "emergency_contact", "label": "Add Emergency Contact", "category": "personal"},
+    {"id": "it_setup", "label": "IT Equipment Setup", "category": "it"},
+    {"id": "team_intro", "label": "Team Introduction Meeting", "category": "orientation"},
+    {"id": "policy_ack", "label": "Acknowledge Company Policies", "category": "compliance"},
+]
 
 # ── Pydantic Models ──
 class UserLogin(BaseModel):
@@ -755,6 +785,19 @@ async def approve_leave(leave_id: str, current_user: dict = Depends(get_current_
         {"$set": {"status": LeaveStatus.APPROVED, "approved_by": current_user["id"],
                   "approved_at": datetime.now(timezone.utc).isoformat()}}
     )
+    # Update leave balance
+    balance = await db.leave_balances.find_one({"employee_id": leave["employee_id"]}, {"_id": 0})
+    if balance:
+        lt = leave["leave_type"]
+        balances = balance.get("balances", {})
+        if lt in balances:
+            balances[lt]["used"] = balances[lt].get("used", 0) + leave["total_days"]
+            balances[lt]["available"] = balances[lt]["total"] - balances[lt]["used"]
+            await db.leave_balances.update_one({"employee_id": leave["employee_id"]}, {"$set": {"balances": balances}})
+    # Notification
+    emp = await db.employees.find_one({"id": leave["employee_id"]}, {"_id": 0})
+    if emp:
+        await create_notification(emp["user_id"], "Leave Approved", f"Your {leave['leave_type']} leave has been approved.", "success")
     return {"message": "Leave approved successfully"}
 
 @api_router.put("/leaves/{leave_id}/reject")
@@ -769,6 +812,9 @@ async def reject_leave(leave_id: str, current_user: dict = Depends(get_current_u
         {"$set": {"status": LeaveStatus.REJECTED, "approved_by": current_user["id"],
                   "approved_at": datetime.now(timezone.utc).isoformat()}}
     )
+    emp = await db.employees.find_one({"id": leave["employee_id"]}, {"_id": 0})
+    if emp:
+        await create_notification(emp["user_id"], "Leave Rejected", f"Your {leave['leave_type']} leave has been rejected.", "warning")
     return {"message": "Leave rejected"}
 
 
@@ -842,49 +888,158 @@ async def disburse_reimbursement(reimb_id: str, current_user: dict = Depends(get
     return {"message": "Reimbursement disbursed"}
 
 
-# ══════════════════════  SALARY / PAYROLL  ══════════════════════
+# ══════════════════════  INDIAN TAX CALCULATOR  ══════════════════════
+@api_router.post("/tax/calculate")
+async def calculate_tax(basic: float, hra: float, da: float, other: float, current_user: dict = Depends(get_current_user)):
+    result = calculate_full_salary(basic, hra, da, other)
+    return result
+
 @api_router.post("/salaries", response_model=SalaryStructureResponse)
 async def create_salary_structure(salary: SalaryStructureCreate, current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
     salary_id = str(uuid.uuid4())
     salary_doc = salary.model_dump()
     salary_doc["id"] = salary_id
-    gross = salary.basic_salary + salary.hra + salary.da + salary.other_allowances
-    deductions = salary.pf_deduction + salary.esi_deduction + salary.tds_deduction + salary.professional_tax
-    salary_doc["gross_salary"] = gross
-    salary_doc["total_deductions"] = deductions
-    salary_doc["net_salary"] = gross - deductions
+    # Use Indian tax calculation
+    tax_calc = calculate_full_salary(salary.basic_salary, salary.hra, salary.da, salary.other_allowances)
+    salary_doc["gross_salary"] = tax_calc["earnings"]["gross_salary"]
+    salary_doc["pf_deduction"] = tax_calc["deductions"]["pf_employee"]
+    salary_doc["esi_deduction"] = tax_calc["deductions"]["esic_employee"]
+    salary_doc["tds_deduction"] = tax_calc["deductions"]["tds_monthly"]
+    salary_doc["professional_tax"] = tax_calc["deductions"]["professional_tax"]
+    salary_doc["total_deductions"] = tax_calc["deductions"]["total_deductions"]
+    salary_doc["net_salary"] = tax_calc["net_salary"]
+    salary_doc["employer_pf"] = tax_calc["deductions"]["pf_employer"]
+    salary_doc["employer_esic"] = tax_calc["deductions"]["esic_employer"]
+    salary_doc["ctc_monthly"] = tax_calc["ctc_monthly"]
+    salary_doc["ctc_annual"] = tax_calc["ctc_annual"]
     salary_doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.salaries.insert_one(salary_doc)
     return SalaryStructureResponse(**salary_doc)
 
-@api_router.get("/salaries/{employee_id}", response_model=SalaryStructureResponse)
-async def get_salary_structure(employee_id: str, current_user: dict = Depends(get_current_user)):
-    salary = await db.salaries.find_one({"employee_id": employee_id}, {"_id": 0})
-    if not salary:
-        raise HTTPException(status_code=404, detail="Salary structure not found")
-    return SalaryStructureResponse(**salary)
 
+# ══════════════════════  LEAVE BALANCE  ══════════════════════
+@api_router.get("/leave-balance/{employee_id}")
+async def get_leave_balance(employee_id: str, current_user: dict = Depends(get_current_user)):
+    balance = await db.leave_balances.find_one({"employee_id": employee_id}, {"_id": 0})
+    if not balance:
+        # Initialize with default policy
+        balance = {
+            "id": str(uuid.uuid4()),
+            "employee_id": employee_id,
+            "balances": {k: {"total": v, "used": 0, "available": v} for k, v in DEFAULT_LEAVE_POLICY.items()},
+            "year": datetime.now(timezone.utc).year,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.leave_balances.insert_one(balance)
+    return {k: v for k, v in balance.items() if k != "_id"}
+
+@api_router.put("/leave-policy")
+async def update_leave_policy(policy: Dict[str, int], current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.leave_policies.update_one(
+        {"type": "default"},
+        {"$set": {"policy": policy, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    return {"message": "Leave policy updated"}
+
+@api_router.get("/leave-policy")
+async def get_leave_policy(current_user: dict = Depends(get_current_user)):
+    policy = await db.leave_policies.find_one({"type": "default"}, {"_id": 0})
+    return policy.get("policy", DEFAULT_LEAVE_POLICY) if policy else DEFAULT_LEAVE_POLICY
+
+
+# ══════════════════════  PAYSLIP GENERATION  ══════════════════════
 @api_router.post("/payslips/generate")
 async def generate_payslip(employee_id: str, month: str, year: int, current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
     salary = await db.salaries.find_one({"employee_id": employee_id}, {"_id": 0})
     if not salary:
         raise HTTPException(status_code=404, detail="Salary structure not found")
+    # Check for existing payslip
+    existing = await db.payslips.find_one({"employee_id": employee_id, "month": month, "year": year}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Payslip already generated for this period")
+    # Calculate working days
+    att_count = await db.attendance.count_documents({
+        "employee_id": employee_id,
+        "date": {"$regex": f"^{year}-{month.zfill(2)}"}
+    })
+    days_worked = att_count if att_count > 0 else 22
     payslip_id = str(uuid.uuid4())
     payslip_doc = {
         "id": payslip_id, "employee_id": employee_id, "month": month, "year": year,
-        "salary_structure_id": salary["id"], "total_working_days": 22, "days_worked": 22,
-        "gross_salary": salary["gross_salary"], "total_deductions": salary["total_deductions"],
-        "net_salary": salary["net_salary"], "generated_at": datetime.now(timezone.utc).isoformat()
+        "salary_structure_id": salary["id"], "total_working_days": 22, "days_worked": days_worked,
+        "basic_salary": salary.get("basic_salary", 0),
+        "hra": salary.get("hra", 0),
+        "da": salary.get("da", 0),
+        "other_allowances": salary.get("other_allowances", 0),
+        "gross_salary": salary["gross_salary"],
+        "pf_deduction": salary.get("pf_deduction", 0),
+        "esi_deduction": salary.get("esi_deduction", 0),
+        "tds_deduction": salary.get("tds_deduction", 0),
+        "professional_tax": salary.get("professional_tax", 0),
+        "total_deductions": salary["total_deductions"],
+        "net_salary": salary["net_salary"],
+        "generated_at": datetime.now(timezone.utc).isoformat()
     }
     await db.payslips.insert_one(payslip_doc)
     return PayslipResponse(**payslip_doc)
 
-@api_router.get("/payslips/{employee_id}", response_model=List[PayslipResponse])
-async def get_payslips(employee_id: str, current_user: dict = Depends(get_current_user)):
-    payslips = await db.payslips.find({"employee_id": employee_id}, {"_id": 0}).to_list(1000)
-    return [PayslipResponse(**ps) for ps in payslips]
+
+# ══════════════════════  DOCUMENT MANAGEMENT  ══════════════════════
+@api_router.post("/documents/upload")
+async def upload_document(
+    employee_id: str,
+    document_type: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    ext = file.filename.split(".")[-1] if "." in file.filename else "bin"
+    path = f"hrms-app/documents/{employee_id}/{uuid.uuid4()}.{ext}"
+    data = await file.read()
+    try:
+        result = put_object(path, data, file.content_type or "application/octet-stream")
+        doc_id = str(uuid.uuid4())
+        doc_record = {
+            "id": doc_id,
+            "employee_id": employee_id,
+            "document_type": document_type,
+            "original_filename": file.filename,
+            "storage_path": result["path"],
+            "content_type": file.content_type,
+            "size": result.get("size", len(data)),
+            "uploaded_by": current_user["id"],
+            "is_deleted": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.documents.insert_one(doc_record)
+        return {"id": doc_id, "filename": file.filename, "path": result["path"], "document_type": document_type}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@api_router.get("/documents/{employee_id}")
+async def get_employee_documents(employee_id: str, current_user: dict = Depends(get_current_user)):
+    docs = await db.documents.find({"employee_id": employee_id, "is_deleted": False}, {"_id": 0}).to_list(100)
+    return docs
+
+@api_router.get("/documents/download/{doc_id}")
+async def download_document(doc_id: str, current_user: dict = Depends(get_current_user)):
+    record = await db.documents.find_one({"id": doc_id, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        data, content_type = get_object(record["storage_path"])
+        return Response(content=data, media_type=record.get("content_type", content_type),
+                       headers={"Content-Disposition": f"attachment; filename={record['original_filename']}"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+@api_router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
+    await db.documents.update_one({"id": doc_id}, {"$set": {"is_deleted": True}})
+    return {"message": "Document deleted"}
 
 
 # ══════════════════════  RECRUITMENT  ══════════════════════
@@ -971,6 +1126,18 @@ async def get_performance_reviews(employee_id: Optional[str] = None, current_use
     reviews = await db.performance_reviews.find(query, {"_id": 0}).to_list(1000)
     return [PerformanceReviewResponse(**r) for r in reviews]
 
+@api_router.get("/salaries/{employee_id}", response_model=SalaryStructureResponse)
+async def get_salary_structure(employee_id: str, current_user: dict = Depends(get_current_user)):
+    salary = await db.salaries.find_one({"employee_id": employee_id}, {"_id": 0})
+    if not salary:
+        raise HTTPException(status_code=404, detail="Salary structure not found")
+    return SalaryStructureResponse(**salary)
+
+@api_router.get("/payslips/{employee_id}", response_model=List[PayslipResponse])
+async def get_payslips(employee_id: str, current_user: dict = Depends(get_current_user)):
+    payslips = await db.payslips.find({"employee_id": employee_id}, {"_id": 0}).to_list(1000)
+    return [PayslipResponse(**ps) for ps in payslips]
+
 
 # ══════════════════════  DASHBOARD  ══════════════════════
 @api_router.get("/dashboard/stats")
@@ -993,6 +1160,96 @@ async def get_dashboard_stats(current_user: dict = Depends(get_current_user)):
     }
 
 
+# ══════════════════════  NOTIFICATIONS  ══════════════════════
+@api_router.get("/notifications")
+async def get_notifications(current_user: dict = Depends(get_current_user)):
+    notifs = await db.notifications.find(
+        {"user_id": current_user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return notifs
+
+@api_router.put("/notifications/{notif_id}/read")
+async def mark_notification_read(notif_id: str, current_user: dict = Depends(get_current_user)):
+    await db.notifications.update_one({"id": notif_id}, {"$set": {"read": True}})
+    return {"message": "Notification marked as read"}
+
+@api_router.put("/notifications/read-all")
+async def mark_all_notifications_read(current_user: dict = Depends(get_current_user)):
+    await db.notifications.update_many({"user_id": current_user["id"]}, {"$set": {"read": True}})
+    return {"message": "All notifications marked as read"}
+
+@api_router.get("/notifications/unread-count")
+async def get_unread_count(current_user: dict = Depends(get_current_user)):
+    count = await db.notifications.count_documents({"user_id": current_user["id"], "read": False})
+    return {"count": count}
+
+async def create_notification(user_id: str, title: str, message: str, notif_type: str = "info"):
+    notif = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "title": title,
+        "message": message,
+        "type": notif_type,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.notifications.insert_one(notif)
+
+
+# ══════════════════════  PASSWORD RESET  ══════════════════════
+@api_router.post("/auth/change-password")
+async def change_password(old_password: str, new_password: str, current_user: dict = Depends(get_current_user)):
+    user = await db.users.find_one({"id": current_user["id"]}, {"_id": 0})
+    if not user or not verify_password(old_password, user["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await db.users.update_one({"id": current_user["id"]}, {"$set": {"password": hash_password(new_password)}})
+    return {"message": "Password changed successfully"}
+
+@api_router.post("/auth/reset-password")
+async def admin_reset_password(employee_email: EmailStr, new_password: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    user = await db.users.find_one({"email": employee_email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"email": employee_email}, {"$set": {"password": hash_password(new_password)}})
+    return {"message": f"Password reset for {employee_email}"}
+
+
+# ══════════════════════  ONBOARDING CHECKLIST  ══════════════════════
+@api_router.get("/onboarding/{employee_id}")
+async def get_onboarding_checklist(employee_id: str, current_user: dict = Depends(get_current_user)):
+    checklist = await db.onboarding.find_one({"employee_id": employee_id}, {"_id": 0})
+    if not checklist:
+        checklist = {
+            "id": str(uuid.uuid4()),
+            "employee_id": employee_id,
+            "items": [{**item, "completed": False, "completed_at": None} for item in DEFAULT_ONBOARDING_CHECKLIST],
+            "overall_progress": 0,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.onboarding.insert_one(checklist)
+    return {k: v for k, v in checklist.items() if k != "_id"}
+
+@api_router.put("/onboarding/{employee_id}/item/{item_id}")
+async def update_onboarding_item(employee_id: str, item_id: str, completed: bool, current_user: dict = Depends(get_current_user)):
+    checklist = await db.onboarding.find_one({"employee_id": employee_id}, {"_id": 0})
+    if not checklist:
+        raise HTTPException(status_code=404, detail="Checklist not found")
+    items = checklist.get("items", [])
+    for item in items:
+        if item["id"] == item_id:
+            item["completed"] = completed
+            item["completed_at"] = datetime.now(timezone.utc).isoformat() if completed else None
+            break
+    completed_count = sum(1 for i in items if i["completed"])
+    progress = round((completed_count / len(items)) * 100) if items else 0
+    await db.onboarding.update_one(
+        {"employee_id": employee_id},
+        {"$set": {"items": items, "overall_progress": progress}}
+    )
+    return {"message": "Checklist updated", "progress": progress}
+
+
 # ── Mount ──
 app.include_router(api_router)
 
@@ -1006,6 +1263,14 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        init_storage()
+        logger.info("Storage initialized at startup")
+    except Exception as e:
+        logger.warning(f"Storage init failed at startup: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

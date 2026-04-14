@@ -10,9 +10,12 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 
+const LEAVE_LABELS = { casual: 'Casual', sick: 'Sick', earned: 'Earned', maternity: 'Maternity', paternity: 'Paternity', unpaid: 'Unpaid' };
+
 const LeavePage = () => {
   const { isAdmin } = useAuth();
   const [leaves, setLeaves] = useState([]);
+  const [leaveBalances, setLeaveBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -25,6 +28,13 @@ const LeavePage = () => {
     try {
       const res = await leaveAPI.getAll();
       setLeaves(res.data);
+      // Fetch leave balances for employees
+      if (!isAdmin) {
+        try {
+          const balRes = await leaveAPI.getBalance('current');
+          setLeaveBalances(balRes.data?.balances || null);
+        } catch (e) { /* ok */ }
+      }
     } catch { setLeaves([]); }
     finally { setLoading(false); }
   };
@@ -113,6 +123,20 @@ const LeavePage = () => {
           </Dialog>
         )}
       </div>
+
+      {/* Leave Balance Cards */}
+      {!isAdmin && leaveBalances && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {Object.entries(leaveBalances).map(([type, bal]) => (
+            <div key={type} className="bg-white border border-[#E8E2D9] rounded-2xl p-4 shadow-[0_4px_20px_-4px_rgba(42,38,36,0.05)]">
+              <p className="text-xs text-[#6A625E] mb-1 capitalize">{LEAVE_LABELS[type] || type}</p>
+              <p className="text-2xl font-semibold text-[#2A2624]">{bal.available}</p>
+              <p className="text-xs text-[#A28B7A]">of {bal.total} days</p>
+              {bal.used > 0 && <p className="text-xs text-[#E8B25C] mt-1">{bal.used} used</p>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

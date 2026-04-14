@@ -40,6 +40,9 @@ export const leaveAPI = {
   apply: (data) => api.post('/leaves', data),
   approve: (id) => api.put(`/leaves/${id}/approve`),
   reject: (id) => api.put(`/leaves/${id}/reject`),
+  getBalance: (employeeId) => api.get(`/leave-balance/${employeeId}`),
+  getPolicy: () => api.get('/leave-policy'),
+  updatePolicy: (policy) => api.put('/leave-policy', policy),
 };
 
 export const reimbursementAPI = {
@@ -58,6 +61,10 @@ export const salaryAPI = {
 export const payslipAPI = {
   getAll: (employeeId) => api.get(`/payslips/${employeeId}`),
   generate: (employeeId, month, year) => api.post('/payslips/generate', null, { params: { employee_id: employeeId, month, year } }),
+};
+
+export const taxAPI = {
+  calculate: (basic, hra, da, other) => api.post('/tax/calculate', null, { params: { basic, hra, da, other } }),
 };
 
 export const jobAPI = {
@@ -84,6 +91,36 @@ export const dashboardAPI = {
 
 export const hierarchyAPI = {
   get: () => api.get('/hierarchy'),
+};
+
+export const notificationAPI = {
+  getAll: () => api.get('/notifications'),
+  markRead: (id) => api.put(`/notifications/${id}/read`),
+  markAllRead: () => api.put('/notifications/read-all'),
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+};
+
+export const documentAPI = {
+  upload: (employeeId, documentType, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/documents/upload?employee_id=${employeeId}&document_type=${documentType}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+  getAll: (employeeId) => api.get(`/documents/${employeeId}`),
+  download: (docId) => api.get(`/documents/download/${docId}`, { responseType: 'blob' }),
+  delete: (docId) => api.delete(`/documents/${docId}`),
+};
+
+export const onboardingAPI = {
+  get: (employeeId) => api.get(`/onboarding/${employeeId}`),
+  updateItem: (employeeId, itemId, completed) => api.put(`/onboarding/${employeeId}/item/${itemId}`, null, { params: { completed } }),
+};
+
+export const authAPI = {
+  changePassword: (oldPassword, newPassword) => api.post('/auth/change-password', null, { params: { old_password: oldPassword, new_password: newPassword } }),
+  resetPassword: (email, newPassword) => api.post('/auth/reset-password', null, { params: { employee_email: email, new_password: newPassword } }),
 };
 
 export default api;

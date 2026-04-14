@@ -4,8 +4,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   House, Users, ClockCounterClockwise, CalendarX,
   CurrencyDollar, Briefcase, ChartLine, SignOut,
-  List, X, Buildings, Receipt, TreeStructure
+  List, X, Buildings, Receipt, TreeStructure,
+  FileText, Rocket
 } from '@phosphor-icons/react';
+import NotificationBell from './NotificationBell';
 
 const Layout = ({ children }) => {
   const { user, logout, isAdmin, hasPermission } = useAuth();
@@ -24,12 +26,14 @@ const Layout = ({ children }) => {
     { name: 'Leave', path: '/leave', icon: CalendarX, module: 'leave' },
     { name: 'Payroll', path: '/payroll', icon: CurrencyDollar, module: 'payroll' },
     { name: 'Reimbursements', path: '/reimbursements', icon: Receipt, module: 'reimbursements' },
+    { name: 'Documents', path: '/documents', icon: FileText, module: 'documents' },
     ...(isAdmin ? [
       { name: 'Recruitment', path: '/recruitment', icon: Briefcase, module: 'recruitment' },
     ] : (hasPermission('recruitment') ? [
       { name: 'Recruitment', path: '/recruitment', icon: Briefcase, module: 'recruitment' },
     ] : [])),
     { name: 'Performance', path: '/performance', icon: ChartLine, module: 'performance' },
+    { name: 'Onboarding', path: '/onboarding', icon: Rocket, module: 'onboarding' },
   ].filter(item => isAdmin || hasPermission(item.module));
 
   const handleLogout = () => {
@@ -129,6 +133,7 @@ const Layout = ({ children }) => {
               {navigation.find(item => item.path === location.pathname)?.name || 'HRMS'}
             </h2>
             <div className="flex items-center space-x-2">
+              <NotificationBell />
               {isAdmin && (
                 <span className="badge badge-info text-xs px-3 py-1">Admin</span>
               )}

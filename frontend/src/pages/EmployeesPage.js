@@ -18,7 +18,9 @@ const PERMISSION_LABELS = {
   recruitment: 'Recruitment',
   performance: 'Performance',
   reimbursements: 'Reimbursements',
-  employee_directory: 'Employee Directory'
+  employee_directory: 'Employee Directory',
+  documents: 'Documents',
+  onboarding: 'Onboarding'
 };
 
 const EmployeesPage = () => {

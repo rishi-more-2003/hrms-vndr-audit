@@ -14,6 +14,8 @@ import PayrollPage from './pages/PayrollPage';
 import ReimbursementsPage from './pages/ReimbursementsPage';
 import RecruitmentPage from './pages/RecruitmentPage';
 import PerformancePage from './pages/PerformancePage';
+import DocumentsPage from './pages/DocumentsPage';
+import OnboardingPage from './pages/OnboardingPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -50,8 +52,10 @@ function AppRoutes() {
       <Route path="/leave" element={<PrivateRoute requiredModule="leave"><Layout><LeavePage /></Layout></PrivateRoute>} />
       <Route path="/payroll" element={<PrivateRoute requiredModule="payroll"><Layout><PayrollPage /></Layout></PrivateRoute>} />
       <Route path="/reimbursements" element={<PrivateRoute requiredModule="reimbursements"><Layout><ReimbursementsPage /></Layout></PrivateRoute>} />
+      <Route path="/documents" element={<PrivateRoute requiredModule="documents"><Layout><DocumentsPage /></Layout></PrivateRoute>} />
       <Route path="/recruitment" element={<PrivateRoute requiredModule="recruitment"><Layout><RecruitmentPage /></Layout></PrivateRoute>} />
       <Route path="/performance" element={<PrivateRoute requiredModule="performance"><Layout><PerformancePage /></Layout></PrivateRoute>} />
+      <Route path="/onboarding" element={<PrivateRoute requiredModule="onboarding"><Layout><OnboardingPage /></Layout></PrivateRoute>} />
       <Route path="/" element={<Navigate to="/dashboard" />} />
     </Routes>
   );
