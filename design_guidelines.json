@@ -1,0 +1,115 @@
+{
+  "project_name": "Modern Organic HRMS",
+  "theme": "light",
+  "archetype": "Archetype 1: Organic & Earthy",
+  "rationale": "HR software shouldn't feel like a cold corporate database. Using warm terracotta, sage green, and bone white creates a tactile, human-centric environment that builds trust, reduces stress, and feels premium.",
+  "colors": {
+    "primary": "#D96C5B",
+    "primary_hover": "#C25949",
+    "secondary": "#7D9D85",
+    "background": "#FDFBF9",
+    "surface": "#FFFFFF",
+    "text_primary": "#2A2624",
+    "text_secondary": "#6A625E",
+    "border": "#E8E2D9",
+    "success": "#7D9D85",
+    "warning": "#E8B25C",
+    "destructive": "#C65549",
+    "chart_palettes": [
+      "#D96C5B",
+      "#7D9D85",
+      "#E8B25C",
+      "#A28B7A",
+      "#4A5D4E"
+    ]
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Manrope",
+    "rules": {
+      "h1": "text-4xl sm:text-5xl tracking-tight leading-none font-semibold text-[#2A2624]",
+      "h2": "text-2xl sm:text-3xl tracking-tight leading-tight font-medium text-[#2A2624]",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium text-[#2A2624]",
+      "h4": "text-lg sm:text-xl font-medium text-[#2A2624]",
+      "body": "text-base leading-relaxed text-[#6A625E]",
+      "small": "text-sm text-[#6A625E]",
+      "overline": "text-xs uppercase tracking-[0.2em] font-bold text-[#A28B7A]"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous Spacing: Use 2-3x more spacing than typical designs. Elements should breathe.",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 lg:gap-8",
+    "card_padding": "p-6 lg:p-8",
+    "border_radius": "rounded-2xl"
+  },
+  "surface_styles": {
+    "cards": "bg-white border border-[#E8E2D9] shadow-[0_4px_20px_-4px_rgba(42,38,36,0.05)] rounded-2xl",
+    "header": "bg-[#FDFBF9]/80 backdrop-blur-xl border-b border-[#E8E2D9] z-50 sticky top-0",
+    "sidebar": "bg-[#FDFBF9] border-r border-[#E8E2D9]"
+  },
+  "components": {
+    "buttons": {
+      "base": "rounded-xl font-medium transition-all duration-200 active:scale-95",
+      "primary": "bg-[#D96C5B] text-white hover:bg-[#C25949] shadow-sm",
+      "secondary": "bg-white text-[#2A2624] border border-[#E8E2D9] hover:border-[#D96C5B] hover:text-[#D96C5B]"
+    },
+    "inputs": "bg-white border border-[#E8E2D9] rounded-xl focus:ring-2 focus:ring-[#D96C5B]/20 focus:border-[#D96C5B] text-base",
+    "tables": "Shadcn Table heavily customized. No vertical borders. Header row background #F9F6F0. Text color #2A2624.",
+    "tabs": "Shadcn Tabs, h-auto, clear active state using #D96C5B text and underline.",
+    "badges": "rounded-full px-3 py-1 text-xs font-medium"
+  },
+  "animations": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "page_transition": "framer-motion fade in and slide up slightly (y: 10 -> 0)",
+    "list_stagger": "framer-motion stagger children 0.05s"
+  },
+  "icons_library": "@phosphor-icons/react",
+  "icon_style": "Duotone or Regular weight, matched to text color or primary color.",
+  "media": {
+    "login_background": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/38ca0ccc-3744-43d1-894a-950737bb637c/images/b5042902ac5440e490d965893cb5e38ffda2f71226bb16ae44231fedcc99537b.png",
+      "description": "Warm, abstract organic shapes overlapping for the login screen hero/split view"
+    },
+    "empty_state_clipboard": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/38ca0ccc-3744-43d1-894a-950737bb637c/images/77ab1fb42c3c0cc76676d6d1dcfd40753b0fa964f24c75ef05b44d912b162033.png",
+      "description": "Minimalist 3D clay clipboard for empty states in tasks, approvals, or leaves"
+    },
+    "empty_state_plant": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/38ca0ccc-3744-43d1-894a-950737bb637c/images/5de2358c1a56adc9db563ce14b83d67ad1c9fae255c5a3d3c84fbb215b362e23.png",
+      "description": "Minimalist 3D clay plant for generic empty states or successful onboardings"
+    },
+    "company_logo_placeholder": {
+      "url": "https://images.unsplash.com/photo-1633419461186-7d40a38105ec?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwyfHxtaW5pbWFsJTIwZ2VvbWV0cmljJTIwYWJzdHJhY3QlMjBsb2dvfGVufDB8fHx8MTc3NjE3OTkzMHww&ixlib=rb-4.1.0&q=85",
+      "description": "Abstract logo to use as the default company branding in the sidebar header"
+    },
+    "employee_avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1609371497456-3a55a205d5eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGRpdmVyc2V8ZW58MHx8fHwxNzc2MTc5OTMwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Employee avatar 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1581322929625-f4aab333778a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGRpdmVyc2V8ZW58MHx8fHwxNzc2MTc5OTMwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Employee avatar 2"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1697063882499-f7fca7d2d713?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBoZWFkc2hvdCUyMGRpdmVyc2V8ZW58MHx8fHwxNzc2MTc5OTMwfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Employee avatar 3"
+      },
+      {
+        "url": "https://images.pexels.com/photos/33646670/pexels-photo-33646670.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Employee avatar 4"
+      }
+    ]
+  },
+  "specific_instructions_for_main_agent": [
+    "INSTALLATION: Run `yarn add @phosphor-icons/react` before starting.",
+    "COLOR ENFORCEMENT: Do not use generic blue/grey tech colors. Use the exact hex codes provided in this JSON. Tint grays with warmth.",
+    "SPACING: The UI should feel tactile and human. Apply the generous spacing (p-6/p-8) to cards. Do not cram data.",
+    "COMPONENTS: Avoid the standard 'Vercel' look for Shadcn components. Override Shadcn defaults to match the rounded-2xl border radius and warm borders.",
+    "LAYOUT: Implement the 'Control Room' grid layout for the HR metrics dashboard, but with gap-6 instead of tight gaps, to let the data breathe.",
+    "IMAGES: For avatars, use the provided employee_avatars URLs. Do not use random placeholder text or dummyimage.com. Use the 3D clay assets for empty states.",
+    "TESTING: All interactive elements MUST have data-testid attributes (e.g., data-testid='leave-apply-button').",
+    "ACCESSIBILITY: Ensure text contrast over the warm sand backgrounds meets WCAG AA standards.",
+    "LABOUR LAWS: Future-proof the UI by designing flexible, card-based compliance widgets (e.g., PF, ESIC tracking) that use the success/warning colors appropriately."
+  ]
+}
