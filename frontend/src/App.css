@@ -1,34 +1,100 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+.App {
+  min-height: 100vh;
+  background-color: #FDFBF9;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(232, 226, 217, 0.5);
+  box-shadow: 0 4px 20px -4px rgba(42, 38, 36, 0.05);
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+.sidebar-nav-item {
+  transition: all 0.2s ease-in-out;
 }
 
-.App-link {
-    color: #61dafb;
+.sidebar-nav-item:hover {
+  background-color: rgba(217, 108, 91, 0.1);
+  color: #D96C5B;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+.sidebar-nav-item.active {
+  background-color: #D96C5B;
+  color: white;
+}
+
+.btn-primary {
+  background-color: #D96C5B;
+  color: white;
+  border-radius: 0.75rem;
+  padding: 0.625rem 1.5rem;
+  font-weight: 500;
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-primary:hover {
+  background-color: #C25949;
+  transform: scale(0.98);
+}
+
+.btn-primary:active {
+  transform: scale(0.95);
+}
+
+.input-field {
+  background-color: white;
+  border: 1px solid #E8E2D9;
+  border-radius: 0.75rem;
+  padding: 0.625rem 1rem;
+  font-size: 1rem;
+  transition: all 0.2s ease-in-out;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #D96C5B;
+  ring: 2px;
+  ring-color: rgba(217, 108, 91, 0.2);
+}
+
+.stat-card {
+  background: white;
+  border: 1px solid #E8E2D9;
+  box-shadow: 0 4px 20px -4px rgba(42, 38, 36, 0.05);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  transition: all 0.3s ease-in-out;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px -4px rgba(42, 38, 36, 0.1);
+}
+
+.badge {
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-success {
+  background-color: rgba(125, 157, 133, 0.15);
+  color: #4A5D4E;
+}
+
+.badge-warning {
+  background-color: rgba(232, 178, 92, 0.15);
+  color: #8B6A2A;
+}
+
+.badge-danger {
+  background-color: rgba(198, 85, 73, 0.15);
+  color: #C65549;
+}
+
+.badge-info {
+  background-color: rgba(217, 108, 91, 0.15);
+  color: #D96C5B;
 }

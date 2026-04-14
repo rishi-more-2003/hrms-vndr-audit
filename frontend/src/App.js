@@ -1,53 +1,72 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { Toaster } from './components/ui/sonner';
+import Layout from './components/Layout';
+import AuthPage from './pages/AuthPage';
+import Dashboard from './pages/Dashboard';
+import EmployeesPage from './pages/EmployeesPage';
+import DepartmentsPage from './pages/DepartmentsPage';
+import HierarchyPage from './pages/HierarchyPage';
+import AttendancePage from './pages/AttendancePage';
+import LeavePage from './pages/LeavePage';
+import PayrollPage from './pages/PayrollPage';
+import ReimbursementsPage from './pages/ReimbursementsPage';
+import RecruitmentPage from './pages/RecruitmentPage';
+import PerformancePage from './pages/PerformancePage';
+import '@/App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
+const PrivateRoute = ({ children, requiredModule }) => {
+  const { user, loading, isAdmin, hasPermission } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  if (!user) return <Navigate to="/auth" />;
+  if (requiredModule && !isAdmin && !hasPermission(requiredModule)) return <Navigate to="/dashboard" />;
+  return children;
 };
+
+const PublicRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  return user ? <Navigate to="/dashboard" /> : children;
+};
+
+const AdminRoute = ({ children }) => {
+  const { user, loading, isAdmin } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  if (!user) return <Navigate to="/auth" />;
+  if (!isAdmin) return <Navigate to="/dashboard" />;
+  return children;
+};
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/auth" element={<PublicRoute><AuthPage /></PublicRoute>} />
+      <Route path="/dashboard" element={<PrivateRoute requiredModule="dashboard"><Layout><Dashboard /></Layout></PrivateRoute>} />
+      <Route path="/employees" element={<AdminRoute><Layout><EmployeesPage /></Layout></AdminRoute>} />
+      <Route path="/departments" element={<AdminRoute><Layout><DepartmentsPage /></Layout></AdminRoute>} />
+      <Route path="/hierarchy" element={<AdminRoute><Layout><HierarchyPage /></Layout></AdminRoute>} />
+      <Route path="/attendance" element={<PrivateRoute requiredModule="attendance"><Layout><AttendancePage /></Layout></PrivateRoute>} />
+      <Route path="/leave" element={<PrivateRoute requiredModule="leave"><Layout><LeavePage /></Layout></PrivateRoute>} />
+      <Route path="/payroll" element={<PrivateRoute requiredModule="payroll"><Layout><PayrollPage /></Layout></PrivateRoute>} />
+      <Route path="/reimbursements" element={<PrivateRoute requiredModule="reimbursements"><Layout><ReimbursementsPage /></Layout></PrivateRoute>} />
+      <Route path="/recruitment" element={<PrivateRoute requiredModule="recruitment"><Layout><RecruitmentPage /></Layout></PrivateRoute>} />
+      <Route path="/performance" element={<PrivateRoute requiredModule="performance"><Layout><PerformancePage /></Layout></PrivateRoute>} />
+      <Route path="/" element={<Navigate to="/dashboard" />} />
+    </Routes>
+  );
+}
 
 function App() {
   return (
-    <div className="App">
+    <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
+        <div className="App">
+          <AppRoutes />
+          <Toaster position="top-right" />
+        </div>
       </BrowserRouter>
-    </div>
+    </AuthProvider>
   );
 }
 
