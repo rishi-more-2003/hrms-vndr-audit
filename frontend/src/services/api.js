@@ -123,4 +123,47 @@ export const authAPI = {
   resetPassword: (email, newPassword) => api.post('/auth/reset-password', null, { params: { employee_email: email, new_password: newPassword } }),
 };
 
+export const organizationAPI = {
+  get: () => api.get('/organization'),
+  save: (data) => api.post('/organization', data),
+};
+
+export const locationAPI = {
+  getAll: () => api.get('/locations'),
+  create: (data) => api.post('/locations', data),
+  update: (id, data) => api.put(`/locations/${id}`, data),
+  delete: (id) => api.delete(`/locations/${id}`),
+};
+
+export const gradeAPI = {
+  getAll: () => api.get('/employee-grades'),
+  save: (grades) => api.post('/employee-grades', grades),
+};
+
+export const levelAPI = {
+  getAll: () => api.get('/employee-levels'),
+  save: (levels) => api.post('/employee-levels', levels),
+};
+
+export const shiftAPI = {
+  getAll: () => api.get('/shifts'),
+  create: (data) => api.post('/shifts', data),
+  update: (id, data) => api.put(`/shifts/${id}`, data),
+  delete: (id) => api.delete(`/shifts/${id}`),
+};
+
+export const complianceTemplateAPI = {
+  getAll: (type) => api.get(`/compliance-templates/${type}`),
+  create: (type, data) => api.post(`/compliance-templates/${type}`, data),
+  update: (type, id, data) => api.put(`/compliance-templates/${type}/${id}`, data),
+  delete: (type, id) => api.delete(`/compliance-templates/${type}/${id}`),
+};
+
+export const complianceAssignmentAPI = {
+  get: (employeeId) => api.get(`/compliance-assignments/${employeeId}`),
+  update: (employeeId, data) => api.put(`/compliance-assignments/${employeeId}`, data),
+  bulkAssign: (data) => api.post('/compliance-assignments/bulk', data),
+  getAll: () => api.get('/compliance-assignments'),
+};
+
 export default api;

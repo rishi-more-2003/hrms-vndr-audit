@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { dashboardAPI } from '../services/api';
+import { dashboardAPI, organizationAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { Users, Buildings, CalendarX, Briefcase, ClockCounterClockwise, ChartLineUp, Receipt } from '@phosphor-icons/react';
+import { Users, Buildings, CalendarX, Briefcase, ClockCounterClockwise, ChartLineUp, Receipt, GearSix } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { Button } from '../components/ui/button';
 
 const Dashboard = () => {
   const { isAdmin, hasPermission, user } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [orgSetup, setOrgSetup] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => { fetchStats(); }, []);
@@ -17,6 +19,12 @@ const Dashboard = () => {
     try {
       const response = await dashboardAPI.getStats();
       setStats(response.data);
+      if (isAdmin) {
+        try {
+          const orgRes = await organizationAPI.get();
+          setOrgSetup(orgRes.data?.setup_complete || false);
+        } catch { setOrgSetup(false); }
+      }
     } catch { toast.error('Failed to fetch stats'); }
     finally { setLoading(false); }
   };
@@ -54,6 +62,18 @@ const Dashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+
+      {isAdmin && !orgSetup && (
+        <div className="col-span-full bg-[#D96C5B]/5 border-2 border-dashed border-[#D96C5B]/30 rounded-2xl p-6 lg:p-8 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-[#2A2624] mb-1" style={{ fontFamily: 'Outfit' }}>Setup Your Organization</h3>
+            <p className="text-sm text-[#6A625E]">Complete the one-time organization setup to configure company details, locations, shifts, and statutory compliance templates.</p>
+          </div>
+          <Button onClick={() => navigate('/organization')} className="bg-[#D96C5B] hover:bg-[#C25949] rounded-xl flex-shrink-0 ml-4" data-testid="setup-org-button">
+            <GearSix size={20} className="mr-2" /> Setup Now
+          </Button>
+        </div>
+      )}
         {cards.map((card, i) => {
           const Icon = card.icon;
           return (

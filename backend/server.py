@@ -1250,6 +1250,204 @@ async def update_onboarding_item(employee_id: str, item_id: str, completed: bool
     return {"message": "Checklist updated", "progress": progress}
 
 
+# ══════════════════════  ORGANIZATION DETAILS  ══════════════════════
+@api_router.get("/organization")
+async def get_organization(current_user: dict = Depends(get_current_user)):
+    org = await db.organization.find_one({"type": "main"}, {"_id": 0})
+    return org or {"setup_complete": False}
+
+@api_router.post("/organization")
+async def save_organization(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["type"] = "main"
+    data["setup_complete"] = True
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.organization.update_one({"type": "main"}, {"$set": data}, upsert=True)
+    return {"message": "Organization saved"}
+
+# Locations
+@api_router.get("/locations")
+async def get_locations(current_user: dict = Depends(get_current_user)):
+    return await db.locations.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/locations")
+async def create_location(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.locations.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+@api_router.put("/locations/{loc_id}")
+async def update_location(loc_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.locations.update_one({"id": loc_id}, {"$set": data})
+    return {"message": "Location updated"}
+
+@api_router.delete("/locations/{loc_id}")
+async def delete_location(loc_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.locations.delete_one({"id": loc_id})
+    return {"message": "Location deleted"}
+
+# Employee Grades
+@api_router.get("/employee-grades")
+async def get_employee_grades(current_user: dict = Depends(get_current_user)):
+    return await db.employee_grades.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/employee-grades")
+async def save_employee_grades(grades: List[dict], current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.employee_grades.delete_many({})
+    for g in grades:
+        g["id"] = g.get("id", str(uuid.uuid4()))
+    if grades:
+        await db.employee_grades.insert_many(grades)
+    return {"message": "Grades saved"}
+
+# Employee Levels
+@api_router.get("/employee-levels")
+async def get_employee_levels(current_user: dict = Depends(get_current_user)):
+    return await db.employee_levels.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/employee-levels")
+async def save_employee_levels(levels: List[dict], current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.employee_levels.delete_many({})
+    for l in levels:
+        l["id"] = l.get("id", str(uuid.uuid4()))
+    if levels:
+        await db.employee_levels.insert_many(levels)
+    return {"message": "Levels saved"}
+
+# Shifts
+@api_router.get("/shifts")
+async def get_shifts(current_user: dict = Depends(get_current_user)):
+    return await db.shifts.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/shifts")
+async def create_shift(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.shifts.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+@api_router.put("/shifts/{shift_id}")
+async def update_shift(shift_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.shifts.update_one({"id": shift_id}, {"$set": data})
+    return {"message": "Shift updated"}
+
+@api_router.delete("/shifts/{shift_id}")
+async def delete_shift(shift_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.shifts.delete_one({"id": shift_id})
+    return {"message": "Shift deleted"}
+
+
+# ══════════════════════  STATUTORY COMPLIANCE TEMPLATES  ══════════════════════
+# Generic CRUD for all template types: pf, esic, pt, lwf, tds
+TEMPLATE_COLLECTIONS = {
+    "pf": "pf_templates",
+    "esic": "esic_templates",
+    "pt": "pt_templates",
+    "lwf": "lwf_templates",
+    "tds": "tds_templates",
+}
+
+@api_router.get("/compliance-templates/{template_type}")
+async def get_compliance_templates(template_type: str, current_user: dict = Depends(get_current_user)):
+    col = TEMPLATE_COLLECTIONS.get(template_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid template type")
+    templates = await db[col].find({}, {"_id": 0}).to_list(1000)
+    return templates
+
+@api_router.post("/compliance-templates/{template_type}")
+async def create_compliance_template(template_type: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = TEMPLATE_COLLECTIONS.get(template_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid template type")
+    data["id"] = str(uuid.uuid4())
+    data["template_type"] = template_type
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[col].insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+@api_router.put("/compliance-templates/{template_type}/{template_id}")
+async def update_compliance_template(template_type: str, template_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = TEMPLATE_COLLECTIONS.get(template_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid template type")
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[col].update_one({"id": template_id}, {"$set": data})
+    return {"message": "Template updated"}
+
+@api_router.delete("/compliance-templates/{template_type}/{template_id}")
+async def delete_compliance_template(template_type: str, template_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = TEMPLATE_COLLECTIONS.get(template_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid template type")
+    await db[col].delete_one({"id": template_id})
+    # Remove assignments referencing this template
+    await db.compliance_assignments.update_many(
+        {f"{template_type}_template_id": template_id},
+        {"$unset": {f"{template_type}_template_id": ""}}
+    )
+    return {"message": "Template deleted"}
+
+
+# ══════════════════════  COMPLIANCE TEMPLATE ASSIGNMENTS  ══════════════════════
+@api_router.get("/compliance-assignments/{employee_id}")
+async def get_compliance_assignment(employee_id: str, current_user: dict = Depends(get_current_user)):
+    assignment = await db.compliance_assignments.find_one({"employee_id": employee_id}, {"_id": 0})
+    return assignment or {"employee_id": employee_id}
+
+@api_router.put("/compliance-assignments/{employee_id}")
+async def update_compliance_assignment(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["employee_id"] = employee_id
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.compliance_assignments.update_one(
+        {"employee_id": employee_id}, {"$set": data}, upsert=True
+    )
+    return {"message": "Assignment updated"}
+
+@api_router.post("/compliance-assignments/bulk")
+async def bulk_assign_compliance(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    assign_by = data.get("assign_by")  # "location", "department", or "employees"
+    target_id = data.get("target_id")  # location_id or department_id
+    employee_ids = data.get("employee_ids", [])  # direct employee list
+    templates = data.get("templates", {})  # {"pf_template_id": "...", "esic_template_id": "...", etc.}
+
+    if assign_by == "location":
+        emps = await db.employees.find({"location_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+    elif assign_by == "department":
+        emps = await db.employees.find({"department_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+
+    count = 0
+    for emp_id in employee_ids:
+        update_data = {**templates, "employee_id": emp_id, "updated_at": datetime.now(timezone.utc).isoformat()}
+        await db.compliance_assignments.update_one(
+            {"employee_id": emp_id}, {"$set": update_data}, upsert=True
+        )
+        count += 1
+    return {"message": f"Templates assigned to {count} employees"}
+
+@api_router.get("/compliance-assignments")
+async def get_all_compliance_assignments(current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    return await db.compliance_assignments.find({}, {"_id": 0}).to_list(1000)
+
+
 # ── Mount ──
 app.include_router(api_router)
 

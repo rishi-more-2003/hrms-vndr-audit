@@ -425,6 +425,381 @@ class HRMSAPITester:
         print("   Password change endpoint accessible (tested with wrong password)")
         return success1
 
+    # ===== PHASE 3 ORGANIZATION TESTS =====
+    def test_organization_endpoints(self):
+        """Test organization setup endpoints"""
+        # Get organization data
+        success1, org_data = self.run_test(
+            "Get Organization",
+            "GET",
+            "organization",
+            200,
+            token=self.admin_token
+        )
+        
+        # Save organization data
+        org_payload = {
+            "name": "Test Company Ltd",
+            "address": "123 Test Street, Test City",
+            "nature_of_business": "Software Development"
+        }
+        success2, _ = self.run_test(
+            "Save Organization",
+            "POST",
+            "organization",
+            200,
+            data=org_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Organization setup complete: {org_data.get('setup_complete', False)}")
+        
+        return success1 and success2
+
+    def test_location_endpoints(self):
+        """Test location CRUD operations"""
+        # Get all locations
+        success1, locations = self.run_test(
+            "Get All Locations",
+            "GET",
+            "locations",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create a new location
+        location_payload = {
+            "name": "Test Location",
+            "code": "TL001",
+            "address": "Test Address"
+        }
+        success2, new_location = self.run_test(
+            "Create Location",
+            "POST",
+            "locations",
+            200,
+            data=location_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(locations)} existing locations")
+        if success2:
+            print(f"   Created location: {new_location.get('name')}")
+        
+        return success1 and success2
+
+    def test_employee_grades_endpoints(self):
+        """Test employee grades endpoints"""
+        # Get employee grades
+        success1, grades = self.run_test(
+            "Get Employee Grades",
+            "GET",
+            "employee-grades",
+            200,
+            token=self.admin_token
+        )
+        
+        # Save employee grades
+        grades_payload = [
+            {"name": "Unskilled", "code": "USK", "order": 1},
+            {"name": "Semi-skilled", "code": "SSK", "order": 2},
+            {"name": "Skilled", "code": "SK", "order": 3},
+            {"name": "Highly Skilled", "code": "HSK", "order": 4}
+        ]
+        success2, _ = self.run_test(
+            "Save Employee Grades",
+            "POST",
+            "employee-grades",
+            200,
+            data=grades_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(grades)} employee grades")
+        
+        return success1 and success2
+
+    def test_employee_levels_endpoints(self):
+        """Test employee levels endpoints"""
+        # Get employee levels
+        success1, levels = self.run_test(
+            "Get Employee Levels",
+            "GET",
+            "employee-levels",
+            200,
+            token=self.admin_token
+        )
+        
+        # Save employee levels
+        levels_payload = [
+            {"name": "L1", "order": 1},
+            {"name": "L2", "order": 2},
+            {"name": "Senior", "order": 3}
+        ]
+        success2, _ = self.run_test(
+            "Save Employee Levels",
+            "POST",
+            "employee-levels",
+            200,
+            data=levels_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(levels)} employee levels")
+        
+        return success1 and success2
+
+    def test_shifts_endpoints(self):
+        """Test shifts CRUD operations"""
+        # Get all shifts
+        success1, shifts = self.run_test(
+            "Get All Shifts",
+            "GET",
+            "shifts",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create a new shift
+        shift_payload = {
+            "name": "Morning Shift",
+            "start_time": "09:00",
+            "end_time": "18:00",
+            "break_duration": 60
+        }
+        success2, new_shift = self.run_test(
+            "Create Shift",
+            "POST",
+            "shifts",
+            200,
+            data=shift_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(shifts)} existing shifts")
+        if success2:
+            print(f"   Created shift: {new_shift.get('name')}")
+        
+        return success1 and success2
+
+    # ===== PHASE 3 COMPLIANCE TESTS =====
+    def test_compliance_templates_pf(self):
+        """Test PF compliance templates"""
+        # Get PF templates
+        success1, templates = self.run_test(
+            "Get PF Templates",
+            "GET",
+            "compliance-templates/pf",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create PF template
+        pf_payload = {
+            "template_name": "Test PF Template",
+            "pf_applicable": True,
+            "pf_office": "Test PF Office",
+            "pf_code_number": "PF001",
+            "contribution_rate": 12,
+            "wage_ceiling": 15000
+        }
+        success2, new_template = self.run_test(
+            "Create PF Template",
+            "POST",
+            "compliance-templates/pf",
+            200,
+            data=pf_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} PF templates")
+        if success2:
+            print(f"   Created PF template: {new_template.get('template_name')}")
+        
+        return success1 and success2
+
+    def test_compliance_templates_esic(self):
+        """Test ESIC compliance templates"""
+        # Get ESIC templates
+        success1, templates = self.run_test(
+            "Get ESIC Templates",
+            "GET",
+            "compliance-templates/esic",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create ESIC template
+        esic_payload = {
+            "template_name": "Test ESIC Template",
+            "esic_code_no": "ESIC001",
+            "employee_contribution": 0.75,
+            "employer_contribution": 3.25,
+            "wage_ceiling": 21000
+        }
+        success2, new_template = self.run_test(
+            "Create ESIC Template",
+            "POST",
+            "compliance-templates/esic",
+            200,
+            data=esic_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} ESIC templates")
+        if success2:
+            print(f"   Created ESIC template: {new_template.get('template_name')}")
+        
+        return success1 and success2
+
+    def test_compliance_templates_pt(self):
+        """Test PT compliance templates"""
+        # Get PT templates
+        success1, templates = self.run_test(
+            "Get PT Templates",
+            "GET",
+            "compliance-templates/pt",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create PT template with slabs
+        pt_payload = {
+            "template_name": "Test PT Template",
+            "pt_code_no": "PT001",
+            "jurisdiction_state": "Maharashtra",
+            "deduction_frequency": "monthly",
+            "slabs": [
+                {"min_salary": 0, "max_salary": 10000, "male_rate": 0, "female_rate": 0},
+                {"min_salary": 10001, "max_salary": 25000, "male_rate": 200, "female_rate": 150}
+            ]
+        }
+        success2, new_template = self.run_test(
+            "Create PT Template",
+            "POST",
+            "compliance-templates/pt",
+            200,
+            data=pt_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} PT templates")
+        if success2:
+            print(f"   Created PT template: {new_template.get('template_name')}")
+        
+        return success1 and success2
+
+    def test_compliance_templates_lwf(self):
+        """Test LWF compliance templates"""
+        # Get LWF templates
+        success1, templates = self.run_test(
+            "Get LWF Templates",
+            "GET",
+            "compliance-templates/lwf",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create LWF template
+        lwf_payload = {
+            "template_name": "Test LWF Template",
+            "lwf_code_no": "LWF001",
+            "jurisdiction_state": "Maharashtra",
+            "deduction_frequency": "monthly"
+        }
+        success2, new_template = self.run_test(
+            "Create LWF Template",
+            "POST",
+            "compliance-templates/lwf",
+            200,
+            data=lwf_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} LWF templates")
+        if success2:
+            print(f"   Created LWF template: {new_template.get('template_name')}")
+        
+        return success1 and success2
+
+    def test_compliance_templates_tds(self):
+        """Test TDS compliance templates"""
+        # Get TDS templates
+        success1, templates = self.run_test(
+            "Get TDS Templates",
+            "GET",
+            "compliance-templates/tds",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create TDS template
+        tds_payload = {
+            "template_name": "Test TDS Template",
+            "tax_regime": "new_regime",
+            "employer_tan": "ABCD12345E",
+            "cess_rate": 4,
+            "standard_deduction": 75000
+        }
+        success2, new_template = self.run_test(
+            "Create TDS Template",
+            "POST",
+            "compliance-templates/tds",
+            200,
+            data=tds_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} TDS templates")
+        if success2:
+            print(f"   Created TDS template: {new_template.get('template_name')}")
+        
+        return success1 and success2
+
+    def test_compliance_bulk_assignment(self):
+        """Test bulk compliance template assignment"""
+        # Get all compliance assignments
+        success1, assignments = self.run_test(
+            "Get All Compliance Assignments",
+            "GET",
+            "compliance-assignments",
+            200,
+            token=self.admin_token
+        )
+        
+        # Test bulk assignment by department
+        bulk_payload = {
+            "assign_by": "department",
+            "target_id": "test-dept-id",
+            "templates": {
+                "pf_template_id": "test-pf-template",
+                "esic_template_id": "test-esic-template"
+            }
+        }
+        success2, _ = self.run_test(
+            "Bulk Assign Templates",
+            "POST",
+            "compliance-assignments/bulk",
+            200,
+            data=bulk_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(assignments)} compliance assignments")
+        
+        return success1 and success2
+
 def main():
     print("🚀 Starting HRMS Backend API Testing...")
     print("=" * 60)
@@ -471,6 +846,27 @@ def main():
     tester.test_notification_system()
     tester.test_onboarding_checklist()
     tester.test_password_change()
+    
+    # Test Phase 3 features - Organization
+    print("\n📋 PHASE 3 ORGANIZATION TESTS")
+    print("-" * 30)
+    
+    tester.test_organization_endpoints()
+    tester.test_location_endpoints()
+    tester.test_employee_grades_endpoints()
+    tester.test_employee_levels_endpoints()
+    tester.test_shifts_endpoints()
+    
+    # Test Phase 3 features - Compliance
+    print("\n📋 PHASE 3 COMPLIANCE TESTS")
+    print("-" * 30)
+    
+    tester.test_compliance_templates_pf()
+    tester.test_compliance_templates_esic()
+    tester.test_compliance_templates_pt()
+    tester.test_compliance_templates_lwf()
+    tester.test_compliance_templates_tds()
+    tester.test_compliance_bulk_assignment()
     
     # Print final results
     print("\n" + "=" * 60)
