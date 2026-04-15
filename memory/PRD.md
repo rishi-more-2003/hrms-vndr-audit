@@ -1,7 +1,7 @@
 # HRMS Software - PRD
 
 ## Original Problem Statement
-Build an HRMS software accessible via website and mobile. Two-tier login (Admin/Employee), with admin-controlled permissions, employee hierarchy for approvals, Indian labour law compliance, document management, notifications, and onboarding.
+Build an HRMS software with two-tier login (Admin/Employee), admin-controlled permissions, employee hierarchy for approvals, Indian labour law compliance, document management, notifications, onboarding, organization setup, and statutory compliance master with template-based system.
 
 ## Architecture
 - **Frontend**: React 19 + Tailwind CSS + Shadcn/UI + Phosphor Icons
@@ -9,66 +9,41 @@ Build an HRMS software accessible via website and mobile. Two-tier login (Admin/
 - **Auth**: JWT-based with two roles (Admin/Employee)
 - **Storage**: Emergent Object Storage for document uploads
 
-## User Personas
-1. **Admin** - Full access to all features, manages employees, permissions, hierarchy
-2. **Employee** - Access only to modules permitted by admin
-
 ## What's Been Implemented
 
-### Phase 1 (Apr 2026)
+### Phase 1 - Core HRMS (Apr 2026)
 - [x] Two-tier auth (Admin/Employee login tabs)
 - [x] Permission system (10 toggleable modules per employee)
 - [x] Employee hierarchy with reports_to chain
-- [x] Approval chain logic (leave/reimbursement approvals)
-- [x] Dashboard with role-specific views
-- [x] Employee CRUD with auto user account creation
-- [x] Department & Designation management
-- [x] Attendance (clock in/out)
-- [x] Leave management (apply, approve/reject)
-- [x] Reimbursement module (submit, approve, reject, disburse)
-- [x] Recruitment (job postings, applications)
-- [x] Performance (goals, reviews)
+- [x] Dashboard, Employee CRUD, Departments, Designations
+- [x] Attendance, Leave, Reimbursement, Recruitment, Performance
 
-### Phase 2 (Apr 2026)
-- [x] Indian Labour Law Compliance
-  - PF: 12% employee + 12% employer on basic
-  - ESIC: 0.75% employee + 3.25% employer (for salary <= 21K)
-  - TDS: New Tax Regime 2024-25 slabs with standard deduction
-  - Professional Tax: Maharashtra slab rates
-  - Full salary calculator with CTC breakdown
-- [x] Leave Balance Tracking
-  - Configurable leave policies (annual allocation per type)
-  - Auto-deduction on approval, 6 leave types
-  - Balance cards showing available/used/total
-- [x] Payslip Auto-Generation with Indian deductions
-- [x] Document Upload (Aadhaar, PAN, resume, certificates)
-  - Emergent Object Storage integration
-  - Upload, download, soft-delete
-- [x] In-app Notification System
-  - Bell icon with unread count
-  - Notifications on leave/reimbursement approvals
-  - Mark as read functionality
-- [x] Self-service Password Change
-- [x] Admin Password Reset for employees
-- [x] Employee Onboarding Checklist
-  - 10-item default checklist (documents, finance, IT, compliance)
-  - Progress tracking with percentage
-  - Admin can view any employee's checklist
+### Phase 2 - Indian Compliance & Features (Apr 2026)
+- [x] Indian Tax: PF, ESIC, TDS (New Tax Regime 2024-25), PT, CTC calculator
+- [x] Leave balance tracking with configurable policies
+- [x] Document upload (Aadhaar, PAN, resume, certificates)
+- [x] In-app notifications with bell icon
+- [x] Onboarding checklist, Password reset
+
+### Phase 3 - Organization Setup & Statutory Compliance (Apr 2026)
+- [x] **Organization Details**: Company info, locations/sub-units, employee grades (Unskilled/Semi-skilled/Skilled/Highly Skilled), customizable employee levels, shift master with timings
+- [x] **Setup Wizard**: Prompt on dashboard when org not configured
+- [x] **Statutory Compliance Templates** (5 types, each with full CRUD):
+  - **PF Templates**: PF applicable, office, code, coverage dates, contribution rate (default 12%), EDLI details, exemption info, signatory, wage ceiling, admin charges
+  - **ESIC Templates**: Code, commencement date, local office, employee/employer contribution rates, wage ceiling, signatory, dispensary
+  - **PT Templates**: Code, jurisdiction state/city, custom salary+gender slabs, configurable deduction frequency (monthly/quarterly/half-yearly)
+  - **LWF Templates**: Code, jurisdiction, custom salary slabs, configurable frequency
+  - **TDS Templates**: Tax regime (new/old), employer TAN/PAN, standard deduction, cess rate, Section 192 compliance
+- [x] **Template Assignment**: Individual employee + bulk assign by location/department
 
 ## Prioritized Backlog
 ### P0
-- Email/SMS notifications (integrate with SendGrid/Twilio)
-- PDF payslip download/print
-- Leave carry-forward and encashment logic
-
-### P1
+- PDF payslip download with template-based deductions
+- Email/SMS notifications
 - Holiday calendar management
-- Advanced analytics with charts (Recharts)
+### P1
+- Advanced analytics with Recharts
+- Leave carry-forward/encashment
 - Bulk employee import (CSV)
-- PWA support for mobile installation
-
 ### P2
-- Audit trail logging
-- Multi-company/tenant support
-- Integration with accounting software
-- Advanced reporting and exports
+- PWA support, Audit trail, Multi-tenant
