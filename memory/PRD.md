@@ -1,49 +1,44 @@
 # HRMS Software - PRD
 
 ## Original Problem Statement
-Build an HRMS software with two-tier login (Admin/Employee), admin-controlled permissions, employee hierarchy for approvals, Indian labour law compliance, document management, notifications, onboarding, organization setup, and statutory compliance master with template-based system.
+Build an HRMS with two-tier login, admin permissions, hierarchy approvals, Indian labour law compliance, statutory compliance master with template-based system for PF/ESIC/PT/LWF/TDS.
 
 ## Architecture
-- **Frontend**: React 19 + Tailwind CSS + Shadcn/UI + Phosphor Icons
-- **Backend**: FastAPI (Python) + MongoDB
-- **Auth**: JWT-based with two roles (Admin/Employee)
-- **Storage**: Emergent Object Storage for document uploads
+- Frontend: React 19 + Tailwind CSS + Shadcn/UI + Phosphor Icons
+- Backend: FastAPI + MongoDB
+- Auth: JWT (Admin/Employee)
+- Storage: Emergent Object Storage
 
-## What's Been Implemented
+## Implemented Features
 
-### Phase 1 - Core HRMS (Apr 2026)
-- [x] Two-tier auth (Admin/Employee login tabs)
-- [x] Permission system (10 toggleable modules per employee)
-- [x] Employee hierarchy with reports_to chain
-- [x] Dashboard, Employee CRUD, Departments, Designations
-- [x] Attendance, Leave, Reimbursement, Recruitment, Performance
+### Phase 1 - Core HRMS
+- Two-tier auth, 10-module permission system, employee hierarchy, dashboard, CRUD, attendance, leave, reimbursements, recruitment, performance
 
-### Phase 2 - Indian Compliance & Features (Apr 2026)
-- [x] Indian Tax: PF, ESIC, TDS (New Tax Regime 2024-25), PT, CTC calculator
-- [x] Leave balance tracking with configurable policies
-- [x] Document upload (Aadhaar, PAN, resume, certificates)
-- [x] In-app notifications with bell icon
-- [x] Onboarding checklist, Password reset
+### Phase 2 - Indian Compliance & Features
+- Indian tax calculator (PF/ESIC/TDS/PT/CTC), leave balance tracking, document upload, notifications, onboarding, password reset
 
-### Phase 3 - Organization Setup & Statutory Compliance (Apr 2026)
-- [x] **Organization Details**: Company info, locations/sub-units, employee grades (Unskilled/Semi-skilled/Skilled/Highly Skilled), customizable employee levels, shift master with timings
-- [x] **Setup Wizard**: Prompt on dashboard when org not configured
-- [x] **Statutory Compliance Templates** (5 types, each with full CRUD):
-  - **PF Templates**: PF applicable, office, code, coverage dates, contribution rate (default 12%), EDLI details, exemption info, signatory, wage ceiling, admin charges
-  - **ESIC Templates**: Code, commencement date, local office, employee/employer contribution rates, wage ceiling, signatory, dispensary
-  - **PT Templates**: Code, jurisdiction state/city, custom salary+gender slabs, configurable deduction frequency (monthly/quarterly/half-yearly)
-  - **LWF Templates**: Code, jurisdiction, custom salary slabs, configurable frequency
-  - **TDS Templates**: Tax regime (new/old), employer TAN/PAN, standard deduction, cess rate, Section 192 compliance
-- [x] **Template Assignment**: Individual employee + bulk assign by location/department
+### Phase 3 - Organization & Statutory Compliance
+- Organization setup: company info, locations, grades (Unskilled/Semi-skilled/Skilled/Highly Skilled), custom levels, shift master
+- Setup wizard prompt on dashboard
+
+### Phase 3.1 - Advanced Compliance Updates
+- **PF Templates**: Conditional fields:
+  - PF Exempted YES → shows Trust Name, Industry Type, Exemption Section/Date/Authority, Board Date/Term
+  - EDLI Exempted YES → shows EDLI Master Policy, Premium, Payment Date, Policy Period, Insurer
+  - Both hidden when NO
+- **PT & LWF Templates**: Advanced slab configuration:
+  - Deduction Frequency (from employee): monthly/quarterly/half-yearly
+  - Payment Frequency (to government): monthly/quarterly/half-yearly
+  - Slab Salary Basis Period: same_as_deduction / monthly / 3-month cumulative / 6-month cumulative / annual (handles Chennai-style 6-month salary slabs)
+  - Deduction Method when frequencies differ: Spread (divide total across months) / Lump Sum
+  - Exit/Separation Handling: Deduct from final salary / Company bears / Pro-rata
+  - Custom salary slabs by Gender (Male/Female rates)
 
 ## Prioritized Backlog
 ### P0
-- PDF payslip download with template-based deductions
-- Email/SMS notifications
+- PDF payslip with template-based deductions
 - Holiday calendar management
 ### P1
-- Advanced analytics with Recharts
-- Leave carry-forward/encashment
-- Bulk employee import (CSV)
+- Advanced analytics, leave carry-forward, bulk CSV import
 ### P2
-- PWA support, Audit trail, Multi-tenant
+- PWA, audit trail, multi-tenant
