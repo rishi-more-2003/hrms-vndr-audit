@@ -800,6 +800,151 @@ class HRMSAPITester:
         
         return success1 and success2
 
+    # ===== NEW FEATURE TESTS FOR CONDITIONAL FIELDS =====
+    def test_pf_conditional_fields(self):
+        """Test PF template with conditional exemption fields"""
+        # Test PF template with PF exemption enabled
+        pf_exempted_payload = {
+            "template_name": "PF Exempted Template",
+            "pf_applicable": True,
+            "pf_exempted": True,
+            "trust_name": "Test Trust",
+            "industry_type": "Software",
+            "exemption_section": "Section 17",
+            "exemption_date": "2024-01-01",
+            "exemption_authority": "EPFO",
+            "board_term": "3 years"
+        }
+        success1, pf_exempted = self.run_test(
+            "Create PF Template with PF Exemption",
+            "POST",
+            "compliance-templates/pf",
+            200,
+            data=pf_exempted_payload,
+            token=self.admin_token
+        )
+        
+        # Test PF template with EDLI exemption enabled
+        edli_exempted_payload = {
+            "template_name": "EDLI Exempted Template",
+            "pf_applicable": True,
+            "edli_exempted": True,
+            "edli_master_policy": "EDLI123456",
+            "edli_premium": 50000,
+            "edli_payment_date": "2024-03-31",
+            "edli_policy_period": "2024-2025",
+            "edli_insurer": "LIC of India"
+        }
+        success2, edli_exempted = self.run_test(
+            "Create PF Template with EDLI Exemption",
+            "POST",
+            "compliance-templates/pf",
+            200,
+            data=edli_exempted_payload,
+            token=self.admin_token
+        )
+        
+        # Test PF template with both exemptions enabled
+        both_exempted_payload = {
+            "template_name": "Both Exemptions Template",
+            "pf_applicable": True,
+            "pf_exempted": True,
+            "edli_exempted": True,
+            "trust_name": "Combined Trust",
+            "industry_type": "Manufacturing",
+            "exemption_section": "Section 17",
+            "edli_master_policy": "EDLI789012",
+            "edli_premium": 75000
+        }
+        success3, both_exempted = self.run_test(
+            "Create PF Template with Both Exemptions",
+            "POST",
+            "compliance-templates/pf",
+            200,
+            data=both_exempted_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   PF exempted template: {pf_exempted.get('template_name')}")
+            print(f"   Trust name: {pf_exempted.get('trust_name')}")
+        if success2:
+            print(f"   EDLI exempted template: {edli_exempted.get('template_name')}")
+            print(f"   EDLI policy: {edli_exempted.get('edli_master_policy')}")
+        if success3:
+            print(f"   Both exemptions template: {both_exempted.get('template_name')}")
+        
+        return success1 and success2 and success3
+
+    def test_pt_lwf_advanced_config(self):
+        """Test PT/LWF templates with advanced configuration options"""
+        # Test PT template with advanced configuration
+        pt_advanced_payload = {
+            "template_name": "Advanced PT Template",
+            "pt_code_no": "PT_ADV_001",
+            "jurisdiction_state": "Tamil Nadu",
+            "jurisdiction_city": "Chennai",
+            "deduction_frequency": "quarterly",
+            "payment_frequency": "quarterly",
+            "slab_salary_period": "half-yearly",
+            "deduction_method": "lump",
+            "exit_handling": "pro_rata",
+            "slabs": [
+                {"min_salary": 0, "max_salary": 15000, "male_rate": 0, "female_rate": 0},
+                {"min_salary": 15001, "max_salary": 30000, "male_rate": 300, "female_rate": 200},
+                {"min_salary": 30001, "max_salary": 50000, "male_rate": 500, "female_rate": 400}
+            ]
+        }
+        success1, pt_advanced = self.run_test(
+            "Create PT Template with Advanced Config",
+            "POST",
+            "compliance-templates/pt",
+            200,
+            data=pt_advanced_payload,
+            token=self.admin_token
+        )
+        
+        # Test LWF template with advanced configuration
+        lwf_advanced_payload = {
+            "template_name": "Advanced LWF Template",
+            "lwf_code_no": "LWF_ADV_001",
+            "jurisdiction_state": "Karnataka",
+            "jurisdiction_city": "Bangalore",
+            "deduction_frequency": "monthly",
+            "payment_frequency": "half-yearly",
+            "slab_salary_period": "annual",
+            "deduction_method": "spread",
+            "exit_handling": "company_bears",
+            "slabs": [
+                {"min_salary": 0, "max_salary": 25000, "male_rate": 20, "female_rate": 20},
+                {"min_salary": 25001, "max_salary": 50000, "male_rate": 40, "female_rate": 40}
+            ]
+        }
+        success2, lwf_advanced = self.run_test(
+            "Create LWF Template with Advanced Config",
+            "POST",
+            "compliance-templates/lwf",
+            200,
+            data=lwf_advanced_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   PT advanced template: {pt_advanced.get('template_name')}")
+            print(f"   Deduction freq: {pt_advanced.get('deduction_frequency')}")
+            print(f"   Payment freq: {pt_advanced.get('payment_frequency')}")
+            print(f"   Salary period: {pt_advanced.get('slab_salary_period')}")
+            print(f"   Deduction method: {pt_advanced.get('deduction_method')}")
+            print(f"   Exit handling: {pt_advanced.get('exit_handling')}")
+            print(f"   Slabs count: {len(pt_advanced.get('slabs', []))}")
+        
+        if success2:
+            print(f"   LWF advanced template: {lwf_advanced.get('template_name')}")
+            print(f"   Deduction freq: {lwf_advanced.get('deduction_frequency')}")
+            print(f"   Exit handling: {lwf_advanced.get('exit_handling')}")
+        
+        return success1 and success2
+
 def main():
     print("🚀 Starting HRMS Backend API Testing...")
     print("=" * 60)
@@ -867,6 +1012,13 @@ def main():
     tester.test_compliance_templates_lwf()
     tester.test_compliance_templates_tds()
     tester.test_compliance_bulk_assignment()
+    
+    # Test new conditional fields and advanced config
+    print("\n📋 NEW FEATURE TESTS - CONDITIONAL FIELDS")
+    print("-" * 30)
+    
+    tester.test_pf_conditional_fields()
+    tester.test_pt_lwf_advanced_config()
     
     # Print final results
     print("\n" + "=" * 60)
