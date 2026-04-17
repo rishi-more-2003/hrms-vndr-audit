@@ -11,8 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../components/ui/switch';
 
 var POLICY_TYPES = [
-  { key: 'leave', label: 'Leave' },
-  { key: 'attendance', label: 'Attendance' },
+  { key: 'leave', label: 'Leave Policy' },
+  { key: 'attendance', label: 'Attendance Policy' },
 ];
 
 var FREQ_OPTIONS = ['per_week', 'per_month', 'per_quarter', 'per_half_year', 'per_year'];
@@ -489,7 +489,7 @@ export default function PolicyPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="bg-white border border-[#E8E2D9] rounded-xl p-1 w-full flex">
           {POLICY_TYPES.map(function(pt) {
-            return <TabsTrigger key={pt.key} value={pt.key} className="flex-1 rounded-lg text-sm data-[state=active]:bg-[#D96C5B] data-[state=active]:text-white">{pt.label}</TabsTrigger>;
+            return <TabsTrigger key={pt.key} value={pt.key} data-testid={'policy-tab-' + pt.key} className="flex-1 rounded-lg text-sm data-[state=active]:bg-[#D96C5B] data-[state=active]:text-white">{pt.label}</TabsTrigger>;
           })}
         </TabsList>
 
@@ -497,7 +497,7 @@ export default function PolicyPage() {
           return (
             <TabsContent key={pt.key} value={pt.key} className="mt-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-[#2A2624]">{pt.label} Policy Templates</h3>
+                <h3 className="text-lg font-semibold text-[#2A2624]">{pt.label} Templates</h3>
                 <Button onClick={openCreate} className="bg-[#D96C5B] hover:bg-[#C25949] rounded-xl" data-testid={'create-' + pt.key + '-policy'}>
                   <Plus size={18} className="mr-2" /> Create Template
                 </Button>
@@ -505,8 +505,8 @@ export default function PolicyPage() {
               {currentTemplates.length === 0 ? (
                 <div className="bg-white border border-[#E8E2D9] rounded-2xl p-12 text-center">
                   <Scroll size={64} className="mx-auto mb-4 text-[#A28B7A] opacity-50" />
-                  <h3 className="text-xl font-semibold text-[#2A2624] mb-2">No {pt.label} Policies</h3>
-                  <p className="text-[#6A625E]">Create a {pt.label.toLowerCase()} policy template to get started</p>
+                  <h3 className="text-xl font-semibold text-[#2A2624] mb-2">No Templates</h3>
+                  <p className="text-[#6A625E]">Create a {pt.label.toLowerCase()} template to get started</p>
                 </div>
               ) : (
                 <div className="space-y-3">
