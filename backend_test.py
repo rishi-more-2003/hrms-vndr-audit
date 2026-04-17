@@ -945,6 +945,181 @@ class HRMSAPITester:
         
         return success1 and success2
 
+    # ===== POLICY MANAGEMENT TESTS =====
+    def test_policy_templates_leave(self):
+        """Test Leave Policy Templates"""
+        # Get leave policy templates
+        success1, templates = self.run_test(
+            "Get Leave Policy Templates",
+            "GET",
+            "policy-templates/leave",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create leave policy template
+        leave_payload = {
+            "template_name": "Test Leave Policy",
+            "leaves": {
+                "casual": {
+                    "allowed": 12,
+                    "frequency": "per_year",
+                    "application_window_days": 1,
+                    "carry_forward": True,
+                    "max_carry": 5,
+                    "encashment": False,
+                    "clubbing_allowed": True
+                },
+                "sick": {
+                    "allowed": 10,
+                    "frequency": "per_year",
+                    "application_window_days": 0,
+                    "reporting_window_hours": 2,
+                    "medical_docs_threshold": 3,
+                    "medical_docs_frequency": "per_year",
+                    "approval_mode": "auto_if_balance"
+                },
+                "earned": {
+                    "allowed": 15,
+                    "frequency": "per_year",
+                    "credit_cycle": "per_month",
+                    "paid_days_per_credit": 20
+                },
+                "maternity": {
+                    "allowed": 182,
+                    "frequency": "per_year",
+                    "eligibility_min_days": 80,
+                    "documents_required": True
+                },
+                "paternity": {
+                    "allowed": 15,
+                    "frequency": "per_year",
+                    "eligibility_min_days": 80,
+                    "documents_required": True
+                },
+                "wfh": {
+                    "allowed": 24,
+                    "frequency": "per_year",
+                    "enabled": True,
+                    "pay_type": "full"
+                }
+            },
+            "holidays": [
+                {"date": "2024-01-26", "name": "Republic Day", "type": "national"},
+                {"date": "2024-08-15", "name": "Independence Day", "type": "national"}
+            ],
+            "sandwich_rule": True,
+            "negative_balance_allowed": False
+        }
+        success2, new_template = self.run_test(
+            "Create Leave Policy Template",
+            "POST",
+            "policy-templates/leave",
+            200,
+            data=leave_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} leave policy templates")
+        if success2:
+            print(f"   Created leave template: {new_template.get('template_name')}")
+            print(f"   Leave types configured: {len(new_template.get('leaves', {}))}")
+            print(f"   Holidays: {len(new_template.get('holidays', []))}")
+        
+        return success1 and success2
+
+    def test_policy_templates_attendance(self):
+        """Test Attendance Policy Templates"""
+        # Get attendance policy templates
+        success1, templates = self.run_test(
+            "Get Attendance Policy Templates",
+            "GET",
+            "policy-templates/attendance",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create attendance policy template
+        attendance_payload = {
+            "template_name": "Test Attendance Policy",
+            "pay_basis": "monthly",
+            "month_day_calc": "actual",
+            "salary_cycle_start": 1,
+            "salary_cycle_end": 31,
+            "week_offs_per_week": 2,
+            "week_offs_paid": True,
+            "week_off_days": ["Saturday", "Sunday"],
+            "shift_rules": [
+                {
+                    "shift_id": "test-shift-id",
+                    "grace_period_minutes": 15,
+                    "half_day_after_hours": 4,
+                    "min_hours_full_day": 8,
+                    "auto_absent_if_no_clockin_by": "11:00"
+                }
+            ],
+            "compoff_for_holiday_work": True,
+            "compoff_validity_days": 30,
+            "late_mark_tracking": True,
+            "late_marks_to_half_day": 3,
+            "late_mark_frequency": "per_month",
+            "early_departure_tracking": True,
+            "biometric_mandatory": False
+        }
+        success2, new_template = self.run_test(
+            "Create Attendance Policy Template",
+            "POST",
+            "policy-templates/attendance",
+            200,
+            data=attendance_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} attendance policy templates")
+        if success2:
+            print(f"   Created attendance template: {new_template.get('template_name')}")
+            print(f"   Pay basis: {new_template.get('pay_basis')}")
+            print(f"   Week offs: {new_template.get('week_off_days')}")
+            print(f"   Shift rules: {len(new_template.get('shift_rules', []))}")
+        
+        return success1 and success2
+
+    def test_policy_bulk_assignment(self):
+        """Test bulk policy assignment"""
+        # Get all policy assignments
+        success1, assignments = self.run_test(
+            "Get All Policy Assignments",
+            "GET",
+            "policy-assignments",
+            200,
+            token=self.admin_token
+        )
+        
+        # Test bulk assignment by department
+        bulk_payload = {
+            "assign_by": "department",
+            "target_id": "test-dept-id",
+            "templates": {
+                "leave_template_id": "test-leave-template",
+                "attendance_template_id": "test-attendance-template"
+            }
+        }
+        success2, _ = self.run_test(
+            "Bulk Assign Policy Templates",
+            "POST",
+            "policy-assignments/bulk",
+            200,
+            data=bulk_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(assignments)} policy assignments")
+        
+        return success1 and success2
+
 def main():
     print("🚀 Starting HRMS Backend API Testing...")
     print("=" * 60)
@@ -1019,6 +1194,14 @@ def main():
     
     tester.test_pf_conditional_fields()
     tester.test_pt_lwf_advanced_config()
+    
+    # Test Policy Management features
+    print("\n📋 POLICY MANAGEMENT TESTS")
+    print("-" * 30)
+    
+    tester.test_policy_templates_leave()
+    tester.test_policy_templates_attendance()
+    tester.test_policy_bulk_assignment()
     
     # Print final results
     print("\n" + "=" * 60)

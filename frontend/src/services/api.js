@@ -166,4 +166,18 @@ export const complianceAssignmentAPI = {
   getAll: () => api.get('/compliance-assignments'),
 };
 
+export const policyTemplateAPI = {
+  getAll: (type) => api.get(`/policy-templates/${type}`),
+  create: (type, data) => api.post(`/policy-templates/${type}`, data),
+  update: (type, id, data) => api.put(`/policy-templates/${type}/${id}`, data),
+  delete: (type, id) => api.delete(`/policy-templates/${type}/${id}`),
+};
+
+export const policyAssignmentAPI = {
+  get: (employeeId) => api.get(`/policy-assignments/${employeeId}`),
+  update: (employeeId, data) => api.put(`/policy-assignments/${employeeId}`, data),
+  bulkAssign: (data) => api.post('/policy-assignments/bulk', data),
+  getAll: () => api.get('/policy-assignments'),
+};
+
 export default api;

@@ -1356,6 +1356,18 @@ TEMPLATE_COLLECTIONS = {
     "tds": "tds_templates",
 }
 
+POLICY_COLLECTIONS = {
+    "leave": "leave_policy_templates",
+    "attendance": "attendance_policy_templates",
+    "overtime": "overtime_policy_templates",
+    "reimbursement": "reimbursement_policy_templates",
+    "bonus": "bonus_policy_templates",
+    "gratuity": "gratuity_policy_templates",
+    "incentive": "incentive_policy_templates",
+    "advance": "advance_policy_templates",
+    "loan": "loan_policy_templates",
+}
+
 @api_router.get("/compliance-templates/{template_type}")
 async def get_compliance_templates(template_type: str, current_user: dict = Depends(get_current_user)):
     col = TEMPLATE_COLLECTIONS.get(template_type)
@@ -1446,6 +1458,90 @@ async def bulk_assign_compliance(data: dict, current_user: dict = Depends(get_cu
 async def get_all_compliance_assignments(current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
     return await db.compliance_assignments.find({}, {"_id": 0}).to_list(1000)
+
+
+# ══════════════════════  POLICY TEMPLATES  ══════════════════════
+@api_router.get("/policy-templates/{policy_type}")
+async def get_policy_templates(policy_type: str, current_user: dict = Depends(get_current_user)):
+    col = POLICY_COLLECTIONS.get(policy_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid policy type")
+    return await db[col].find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/policy-templates/{policy_type}")
+async def create_policy_template(policy_type: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = POLICY_COLLECTIONS.get(policy_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid policy type")
+    data["id"] = str(uuid.uuid4())
+    data["policy_type"] = policy_type
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[col].insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+@api_router.put("/policy-templates/{policy_type}/{template_id}")
+async def update_policy_template(policy_type: str, template_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = POLICY_COLLECTIONS.get(policy_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid policy type")
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db[col].update_one({"id": template_id}, {"$set": data})
+    return {"message": "Policy template updated"}
+
+@api_router.delete("/policy-templates/{policy_type}/{template_id}")
+async def delete_policy_template(policy_type: str, template_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    col = POLICY_COLLECTIONS.get(policy_type)
+    if not col:
+        raise HTTPException(status_code=400, detail="Invalid policy type")
+    await db[col].delete_one({"id": template_id})
+    await db.policy_assignments.update_many(
+        {f"{policy_type}_template_id": template_id},
+        {"$unset": {f"{policy_type}_template_id": ""}}
+    )
+    return {"message": "Policy template deleted"}
+
+# ══════════════════════  POLICY ASSIGNMENTS  ══════════════════════
+@api_router.get("/policy-assignments/{employee_id}")
+async def get_policy_assignment(employee_id: str, current_user: dict = Depends(get_current_user)):
+    assignment = await db.policy_assignments.find_one({"employee_id": employee_id}, {"_id": 0})
+    return assignment or {"employee_id": employee_id}
+
+@api_router.put("/policy-assignments/{employee_id}")
+async def update_policy_assignment(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["employee_id"] = employee_id
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.policy_assignments.update_one({"employee_id": employee_id}, {"$set": data}, upsert=True)
+    return {"message": "Policy assignment updated"}
+
+@api_router.post("/policy-assignments/bulk")
+async def bulk_assign_policy(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    assign_by = data.get("assign_by")
+    target_id = data.get("target_id")
+    employee_ids = data.get("employee_ids", [])
+    templates = data.get("templates", {})
+    if assign_by == "location":
+        emps = await db.employees.find({"location_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+    elif assign_by == "department":
+        emps = await db.employees.find({"department_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+    count = 0
+    for emp_id in employee_ids:
+        update_data = {**templates, "employee_id": emp_id, "updated_at": datetime.now(timezone.utc).isoformat()}
+        await db.policy_assignments.update_one({"employee_id": emp_id}, {"$set": update_data}, upsert=True)
+        count += 1
+    return {"message": f"Policies assigned to {count} employees"}
+
+@api_router.get("/policy-assignments")
+async def get_all_policy_assignments(current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    return await db.policy_assignments.find({}, {"_id": 0}).to_list(1000)
 
 
 # ── Mount ──
