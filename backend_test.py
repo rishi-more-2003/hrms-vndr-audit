@@ -1086,6 +1086,312 @@ class HRMSAPITester:
         
         return success1 and success2
 
+    def test_policy_templates_overtime(self):
+        """Test Overtime Policy Templates"""
+        # Get overtime policy templates
+        success1, templates = self.run_test(
+            "Get Overtime Policy Templates",
+            "GET",
+            "policy-templates/overtime",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create overtime policy template
+        overtime_payload = {
+            "template_name": "Test Overtime Policy",
+            "overtime_allowed": True,
+            "ot_rate_type": "calculative",
+            "ot_factor": "one_half",
+            "ot_calc_basis": "actual_days",
+            "ot_hours_per_day": 8,
+            "ot_cap_per_day": 4,
+            "ot_cap_per_week": 20,
+            "ot_cap_per_month": 80,
+            "ot_requires_approval": True,
+            "ot_pre_approval_required": False,
+            "ot_limit_alert": True,
+            "ot_holiday_different_rate": True,
+            "ot_holiday_factor": "double"
+        }
+        success2, new_template = self.run_test(
+            "Create Overtime Policy Template",
+            "POST",
+            "policy-templates/overtime",
+            200,
+            data=overtime_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} overtime policy templates")
+        if success2:
+            print(f"   Created overtime template: {new_template.get('template_name')}")
+            print(f"   OT allowed: {new_template.get('overtime_allowed')}")
+            print(f"   OT rate type: {new_template.get('ot_rate_type')}")
+            print(f"   OT factor: {new_template.get('ot_factor')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_reimbursement(self):
+        """Test Reimbursement Policy Templates"""
+        # Get reimbursement policy templates
+        success1, templates = self.run_test(
+            "Get Reimbursement Policy Templates",
+            "GET",
+            "policy-templates/reimbursement",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create reimbursement policy template
+        reimbursement_payload = {
+            "template_name": "Test Reimbursement Policy",
+            "claims_allowed": True,
+            "max_claim_amount": 50000,
+            "min_claim_amount": 100,
+            "claim_frequency": "per_month",
+            "max_claims_per_frequency": 5,
+            "documents_mandatory": True,
+            "approval_mode": "hybrid",
+            "auto_approve_threshold": 5000,
+            "auto_approve_frequency": "per_month",
+            "auto_approve_max_per_freq": 3,
+            "multi_level_approval": False
+        }
+        success2, new_template = self.run_test(
+            "Create Reimbursement Policy Template",
+            "POST",
+            "policy-templates/reimbursement",
+            200,
+            data=reimbursement_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} reimbursement policy templates")
+        if success2:
+            print(f"   Created reimbursement template: {new_template.get('template_name')}")
+            print(f"   Claims allowed: {new_template.get('claims_allowed')}")
+            print(f"   Max claim amount: {new_template.get('max_claim_amount')}")
+            print(f"   Approval mode: {new_template.get('approval_mode')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_bonus(self):
+        """Test Bonus Policy Templates"""
+        # Get bonus policy templates
+        success1, templates = self.run_test(
+            "Get Bonus Policy Templates",
+            "GET",
+            "policy-templates/bonus",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create bonus policy template
+        bonus_payload = {
+            "template_name": "Test Bonus Policy",
+            "bonus_applicable": True,
+            "bonus_type": "statutory",
+            "bonus_percentage": 8.33,
+            "bonus_basis": "basic_salary",
+            "min_days_eligibility": 240,
+            "payment_frequency": "per_year",
+            "statutory_min": 8400,
+            "statutory_max": 21000,
+            "prorata_for_new_joiners": True
+        }
+        success2, new_template = self.run_test(
+            "Create Bonus Policy Template",
+            "POST",
+            "policy-templates/bonus",
+            200,
+            data=bonus_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} bonus policy templates")
+        if success2:
+            print(f"   Created bonus template: {new_template.get('template_name')}")
+            print(f"   Bonus applicable: {new_template.get('bonus_applicable')}")
+            print(f"   Bonus type: {new_template.get('bonus_type')}")
+            print(f"   Bonus percentage: {new_template.get('bonus_percentage')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_gratuity(self):
+        """Test Gratuity Policy Templates"""
+        # Get gratuity policy templates
+        success1, templates = self.run_test(
+            "Get Gratuity Policy Templates",
+            "GET",
+            "policy-templates/gratuity",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create gratuity policy template
+        gratuity_payload = {
+            "template_name": "Test Gratuity Policy",
+            "gratuity_applicable": True,
+            "min_years_service": 5,
+            "gratuity_factor": 15,
+            "salary_basis": "basic_plus_da",
+            "max_gratuity_amount": 2000000,
+            "auto_calculate_on_exit": True,
+            "include_notice_period": False
+        }
+        success2, new_template = self.run_test(
+            "Create Gratuity Policy Template",
+            "POST",
+            "policy-templates/gratuity",
+            200,
+            data=gratuity_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} gratuity policy templates")
+        if success2:
+            print(f"   Created gratuity template: {new_template.get('template_name')}")
+            print(f"   Gratuity applicable: {new_template.get('gratuity_applicable')}")
+            print(f"   Min years service: {new_template.get('min_years_service')}")
+            print(f"   Gratuity factor: {new_template.get('gratuity_factor')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_incentive(self):
+        """Test Incentive Policy Templates"""
+        # Get incentive policy templates
+        success1, templates = self.run_test(
+            "Get Incentive Policy Templates",
+            "GET",
+            "policy-templates/incentive",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create incentive policy template
+        incentive_payload = {
+            "template_name": "Test Incentive Policy",
+            "incentive_applicable": True,
+            "incentive_type": "percentage",
+            "percentage_rate": 5,
+            "percentage_basis": "sales",
+            "payment_freq": "per_quarter",
+            "requires_approval": True,
+            "min_target_achievement": 80,
+            "prorata_allowed": True
+        }
+        success2, new_template = self.run_test(
+            "Create Incentive Policy Template",
+            "POST",
+            "policy-templates/incentive",
+            200,
+            data=incentive_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} incentive policy templates")
+        if success2:
+            print(f"   Created incentive template: {new_template.get('template_name')}")
+            print(f"   Incentive applicable: {new_template.get('incentive_applicable')}")
+            print(f"   Incentive type: {new_template.get('incentive_type')}")
+            print(f"   Percentage rate: {new_template.get('percentage_rate')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_advance(self):
+        """Test Advance Policy Templates"""
+        # Get advance policy templates
+        success1, templates = self.run_test(
+            "Get Advance Policy Templates",
+            "GET",
+            "policy-templates/advance",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create advance policy template
+        advance_payload = {
+            "template_name": "Test Advance Policy",
+            "advance_allowed": True,
+            "max_advance_percentage": 50,
+            "max_advance_amount": 100000,
+            "advance_frequency": "per_quarter",
+            "max_repayment_months": 12,
+            "interest_applicable": False,
+            "requires_approval": True,
+            "min_service_months": 6
+        }
+        success2, new_template = self.run_test(
+            "Create Advance Policy Template",
+            "POST",
+            "policy-templates/advance",
+            200,
+            data=advance_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} advance policy templates")
+        if success2:
+            print(f"   Created advance template: {new_template.get('template_name')}")
+            print(f"   Advance allowed: {new_template.get('advance_allowed')}")
+            print(f"   Max advance percentage: {new_template.get('max_advance_percentage')}")
+            print(f"   Max advance amount: {new_template.get('max_advance_amount')}")
+        
+        return success1 and success2
+
+    def test_policy_templates_loan(self):
+        """Test Loan Policy Templates"""
+        # Get loan policy templates
+        success1, templates = self.run_test(
+            "Get Loan Policy Templates",
+            "GET",
+            "policy-templates/loan",
+            200,
+            token=self.admin_token
+        )
+        
+        # Create loan policy template
+        loan_payload = {
+            "template_name": "Test Loan Policy",
+            "loan_allowed": True,
+            "max_loan_amount": 500000,
+            "max_loan_multiple": 10,
+            "max_repayment_months": 60,
+            "interest_applicable": True,
+            "interest_rate": 8.5,
+            "interest_type": "reducing_balance",
+            "deduction_method": "auto_from_salary",
+            "requires_approval": True,
+            "min_service_months": 12,
+            "multiple_loans_allowed": False,
+            "max_emi_percentage": 30
+        }
+        success2, new_template = self.run_test(
+            "Create Loan Policy Template",
+            "POST",
+            "policy-templates/loan",
+            200,
+            data=loan_payload,
+            token=self.admin_token
+        )
+        
+        if success1:
+            print(f"   Found {len(templates)} loan policy templates")
+        if success2:
+            print(f"   Created loan template: {new_template.get('template_name')}")
+            print(f"   Loan allowed: {new_template.get('loan_allowed')}")
+            print(f"   Max loan amount: {new_template.get('max_loan_amount')}")
+            print(f"   Interest rate: {new_template.get('interest_rate')}")
+        
+        return success1 and success2
+
     def test_policy_bulk_assignment(self):
         """Test bulk policy assignment"""
         # Get all policy assignments
@@ -1201,6 +1507,13 @@ def main():
     
     tester.test_policy_templates_leave()
     tester.test_policy_templates_attendance()
+    tester.test_policy_templates_overtime()
+    tester.test_policy_templates_reimbursement()
+    tester.test_policy_templates_bonus()
+    tester.test_policy_templates_gratuity()
+    tester.test_policy_templates_incentive()
+    tester.test_policy_templates_advance()
+    tester.test_policy_templates_loan()
     tester.test_policy_bulk_assignment()
     
     # Print final results
