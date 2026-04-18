@@ -1,54 +1,31 @@
 # HRMS Software - PRD
 
 ## Architecture
-- Frontend: React 19 + Tailwind CSS + Shadcn/UI + Phosphor Icons
-- Backend: FastAPI + MongoDB
-- Auth: JWT (Admin/Employee), Storage: Emergent Object Storage
+- Frontend: React 19 + Tailwind + Shadcn/UI + Phosphor Icons
+- Backend: FastAPI + MongoDB, Auth: JWT, Storage: Emergent Object Storage
 
-## What's Been Implemented
+## Implemented (Phases 1-5)
 
-### Phase 1 - Core HRMS
-- Two-tier auth (Admin/Employee), 10-module permissions, employee hierarchy, CRUD, attendance, leave, reimbursements, recruitment, performance
+### Core: Two-tier auth, permissions, hierarchy, CRUD, attendance, leave, reimbursements, recruitment, performance
+### Indian Compliance: PF/ESIC/TDS/PT calculator, leave balance, documents, notifications, onboarding
+### Organization: Setup wizard, locations, grades, levels, shifts
+### Statutory Compliance: PF/ESIC/PT/LWF/TDS templates with conditional fields, bulk assign
+### Policy Management (9 types):
 
-### Phase 2 - Indian Compliance
-- Indian tax calculator (PF/ESIC/TDS/PT/CTC), leave balance, document upload, notifications, onboarding
+**Leave Policy**: 6 leave types (CL/SL/EL/ML/PL/WFH) with frequency, application window, carry forward, encashment, clubbing, earned leave credit cycle, sick leave medical docs + auto-approval, maternity/paternity eligibility, WFH pay type, sandwich rule, holiday calendar
 
-### Phase 3 - Organization & Statutory Compliance
-- Organization setup (company info, locations, grades, levels, shifts)
-- Compliance templates: PF (conditional PF/EDLI exemption fields), ESIC, PT (advanced slabs + frequency + exit handling), LWF (same), TDS
-- Template assignment: individual + bulk by location/department
+**Attendance Policy (Enhanced)**: Pay basis, month day calc (actual/fixed with discrepancy warning + 4 handling options), salary cycle, week offs (paid/unpaid + day selector), duty hours, late comer penalty (warning/half-day/quarter-day/proportional/accumulated), early departure penalty, double login handling (with manager approval for re-login), auto-logout (buffer + manager/employee alerts), shift-specific rules (grace/half-day/quarter-day/min hours/auto-absent), comp-off, biometric
 
-### Phase 4 - Policy Management (Current)
-- **Leave Policy Templates** with per-type configuration:
-  - Casual/Sick/Earned/Maternity/Paternity/WFH
-  - Total allowed + frequency (weekly/monthly/quarterly/half-yearly/yearly)
-  - Application window (days prior)
-  - Carry forward (toggle + max limit), Encashment, Clubbing rules
-  - Earned Leave: credit cycle, paid days per credit
-  - Sick Leave: reporting window, medical docs threshold + frequency, auto-approve vs manager approval
-  - Maternity/Paternity: eligibility min days worked, document requirements
-  - WFH: enabled toggle, full/partial pay with percentage
-  - Sandwich Rule, Negative Balance option
-  - Holiday Calendar: date, name, type (national/state/festival/company)
+**Overtime Policy**: Allowed toggle, fixed/calculative rates, OT factors (1x/1.5x/2x/3x/custom), actual/fixed day calculation basis, per-day/week/month/quarter caps, pre-approval, manager alerts, holiday OT rates
 
-- **Attendance Policy Templates**:
-  - Pay basis (daily/monthly)
-  - Month day calculation (actual/fixed 30/fixed 26/custom)
-  - Salary cycle (start day + end day)
-  - Week offs: count per week, specific days (Sun-Sat selector), paid/unpaid
-  - Shift-specific rules: grace period, half-day after hours, min hours full day, auto-absent time
-  - Comp-off for holiday/week-off work with validity
-  - Late mark tracking (marks → half day conversion + frequency)
-  - Early departure tracking, Biometric mandatory toggle
+**Reimbursement Policy**: Claims allowed, min/max amounts, frequency limits, document requirements, direct/manager/hybrid approval modes with auto-approve thresholds, multi-level approval
 
-- **Policy Assignment**: Same as compliance - individual + bulk by location/department
+**Bonus Policy**: Statutory/performance/festival/annual types, % of basic/gross/CTC, min days eligibility, statutory min/max, pro-rata
+**Gratuity Policy**: Min years service, factor (15 days default), salary basis, max amount, auto-calc on exit
+**Incentive Policy**: Fixed/percentage/slab/target-based, payment frequency, min target achievement, pro-rata
+**Advance Policy**: Max % of salary, max amount, repayment months, interest, approval
+**Loan Policy**: Max amount, salary multiple, repayment, simple/reducing interest, EMI deduction, multiple loans
 
 ## Test Credentials
 - Admin: admin@hrms.com / admin123
-- Employee (Rahul): employee@hrms.com / emp123
-- Employee (Priya): priya@hrms.com / priya123
-
-## Backlog
-### P0 - Remaining policy types: Overtime, Reimbursement, Bonus, Gratuity, Incentive/Commission, Advance, Loan
-### P1 - PDF payslip, Holiday calendar integration, Analytics
-### P2 - PWA, Audit trail, Multi-tenant
+- Employee: employee@hrms.com / emp123, priya@hrms.com / priya123
