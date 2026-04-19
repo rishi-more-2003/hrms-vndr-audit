@@ -30,9 +30,18 @@ export const designationAPI = {
 };
 
 export const attendanceAPI = {
-  getAll: (employeeId) => api.get('/attendance', { params: { employee_id: employeeId } }),
-  clockIn: () => api.post('/attendance/clock-in'),
-  clockOut: () => api.post('/attendance/clock-out'),
+  getAll: (employeeId, month) => api.get('/attendance', { params: { employee_id: employeeId, month } }),
+  clockIn: (method) => api.post('/attendance/clock-in', null, { params: { method: method || 'self_clockin' } }),
+  clockOut: (method) => api.post('/attendance/clock-out', null, { params: { method: method || 'self_clockin' } }),
+  manualEntry: (data) => api.post('/attendance/manual-entry', data),
+  adminEntry: (data) => api.post('/attendance/admin-entry', data),
+  bulkEntry: (data) => api.post('/attendance/bulk-entry', data),
+  missedPunch: (data) => api.post('/attendance/missed-punch', data),
+  getMissedPunches: () => api.get('/attendance/missed-punches'),
+  approveMissedPunch: (id) => api.put(`/attendance/missed-punches/${id}/approve`),
+  rejectMissedPunch: (id) => api.put(`/attendance/missed-punches/${id}/reject`),
+  approveEntry: (id) => api.put(`/attendance/${id}/approve`),
+  rejectEntry: (id) => api.put(`/attendance/${id}/reject`),
 };
 
 export const leaveAPI = {

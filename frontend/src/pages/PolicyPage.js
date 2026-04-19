@@ -13,6 +13,7 @@ import { Switch } from '../components/ui/switch';
 var POLICY_TYPES = [
   { key: 'leave', label: 'Leave' },
   { key: 'attendance', label: 'Attendance' },
+  { key: 'attendance_collection', label: 'Collection' },
   { key: 'overtime', label: 'Overtime' },
   { key: 'reimbursement', label: 'Reimburse' },
   { key: 'bonus', label: 'Bonus' },
@@ -252,6 +253,75 @@ function OvertimePolicyForm({data,onChange}){
   );
 }
 
+// ═══════════ ATTENDANCE COLLECTION POLICY ═══════════
+function AttendanceCollectionForm({data,onChange}){
+  var d=data;function set(k,v){onChange({...d,[k]:v});}
+  var METHODS=[
+    {key:'self_clockin',label:'Employee Self Clock-in/out (Real-time)',active:true},
+    {key:'admin_entry',label:'Admin/Manager Manual Entry',active:true},
+    {key:'employee_month_end',label:'Employee End-of-Month Entry',active:true},
+    {key:'manager_month_end',label:'Manager End-of-Month Entry',active:true},
+    {key:'biometric_fingerprint',label:'Biometric Fingerprint',active:false},
+    {key:'biometric_face',label:'Biometric Face Scan',active:false},
+    {key:'geo_tagged',label:'Geo-tagged Clock-in/out (Location)',active:false},
+    {key:'card_tap',label:'Card Tapping / RFID',active:false},
+  ];
+  function toggleMethod(key){var m=[...(d.enabled_methods||[])];var i=m.indexOf(key);if(i>=0)m.splice(i,1);else m.push(key);set('enabled_methods',m);}
+  var enabled=d.enabled_methods||[];
+  return(
+    <div className="space-y-2 max-h-[65vh] overflow-y-auto pr-2">
+      <div><Label className="text-sm">Template Name *</Label><Input value={d.template_name||''} onChange={function(e){set('template_name',e.target.value);}} required/></div>
+      <Section title="Collection Methods" color="#D96C5B">
+        <p className="text-xs text-[#6A625E] mb-3">Select all methods this organization/location uses. Multiple methods can be active simultaneously.</p>
+        {METHODS.map(function(m){var isOn=enabled.indexOf(m.key)>=0;return(
+          <div key={m.key} className={'flex items-center justify-between py-2 border-b border-[#E8E2D9]/50 '+(m.active?'':'opacity-60')}>
+            <div><Label className="text-xs">{m.label}</Label>{!m.active&&<span className="text-xs text-[#A28B7A] ml-2">(Hardware - coming soon)</span>}</div>
+            <Switch checked={isOn} onCheckedChange={function(){toggleMethod(m.key);}} disabled={!m.active}/>
+          </div>
+        );})}
+      </Section>
+      <Section title="Primary & Fallback" color="#7D9D85">
+        <div><Label className="text-xs">Primary Method</Label><Select value={d.primary_method||'self_clockin'} onValueChange={function(v){set('primary_method',v);}}><SelectTrigger className="h-9"><SelectValue/></SelectTrigger><SelectContent>{enabled.map(function(k){var m=METHODS.find(function(x){return x.key===k;});return m?<SelectItem key={k} value={k}>{m.label}</SelectItem>:null;})}</SelectContent></Select></div>
+        <div className="mt-2"><Label className="text-xs">Fallback Method (e.g. app for missed biometric punch)</Label><Select value={d.fallback_method||''} onValueChange={function(v){set('fallback_method',v);}}><SelectTrigger className="h-9"><SelectValue placeholder="None"/></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{enabled.map(function(k){var m=METHODS.find(function(x){return x.key===k;});return m?<SelectItem key={k} value={k}>{m.label}</SelectItem>:null;})}</SelectContent></Select></div>
+        <SwitchField value={d.allow_cross_method||true} onChange={function(v){set('allow_cross_method',v);}} label="Allow cross-method (e.g. biometric in, app out)"/>
+      </Section>
+      {enabled.indexOf('self_clockin')>=0&&(
+        <Section title="Self Clock-in/out Settings" color="#E8B25C">
+          <SwitchField value={d.self_realtime_only||true} onChange={function(v){set('self_realtime_only',v);}} label="Real-time only (current timestamp)"/>
+          <SwitchField value={d.self_allow_manual_time||false} onChange={function(v){set('self_allow_manual_time',v);}} label="Allow employee to select custom in/out time"/>
+          {d.self_allow_manual_time&&<SwitchField value={d.manual_time_needs_approval!==false} onChange={function(v){set('manual_time_needs_approval',v);}} label="Custom time requires manager approval"/>}
+        </Section>
+      )}
+      {enabled.indexOf('employee_month_end')>=0&&(
+        <Section title="Employee Month-End Entry" color="#A28B7A">
+          <SwitchField value={d.month_end_emp_approval!==false} onChange={function(v){set('month_end_emp_approval',v);}} label="Requires manager/team lead approval"/>
+          <NumInput value={d.month_end_emp_deadline||5} onChange={function(v){set('month_end_emp_deadline',v);}} label="Deadline (day of next month)"/>
+        </Section>
+      )}
+      {enabled.indexOf('manager_month_end')>=0&&(
+        <Section title="Manager Month-End Entry" color="#4A5D4E">
+          <SwitchField value={d.month_end_mgr_emp_confirm||false} onChange={function(v){set('month_end_mgr_emp_confirm',v);}} label="Requires employee confirmation"/>
+          <NumInput value={d.month_end_mgr_deadline||10} onChange={function(v){set('month_end_mgr_deadline',v);}} label="Deadline (day of next month)"/>
+        </Section>
+      )}
+      <Section title="Missed Punch Handling" color="#D96C5B">
+        <SwitchField value={d.missed_punch_allowed!==false} onChange={function(v){set('missed_punch_allowed',v);}} label="Allow missed punch correction requests"/>
+        {d.missed_punch_allowed!==false&&(<div className="space-y-2">
+          <SwitchField value={d.missed_punch_needs_approval!==false} onChange={function(v){set('missed_punch_needs_approval',v);}} label="Requires manager approval"/>
+          <NumInput value={d.missed_punch_window_days||3} onChange={function(v){set('missed_punch_window_days',v);}} label="Correction window (days after date)"/>
+          <NumInput value={d.max_missed_punches_per_month||5} onChange={function(v){set('max_missed_punches_per_month',v);}} label="Max missed punch requests per month"/>
+        </div>)}
+      </Section>
+      <Section title="Double Login & WFH" color="#7D9D85">
+        <SwitchField value={d.double_login_allowed||false} onChange={function(v){set('double_login_allowed',v);}} label="Allow double login/logout (mistaken re-login)"/>
+        {!d.double_login_allowed&&<p className="text-xs text-[#A28B7A]">Mistaken re-login requires manager approval per hierarchy</p>}
+        <SwitchField value={d.wfh_uses_self_clockin!==false} onChange={function(v){set('wfh_uses_self_clockin',v);}} label="WFH employees use self clock-in/out"/>
+        <SwitchField value={d.wfh_different_method||false} onChange={function(v){set('wfh_different_method',v);}} label="WFH uses a different primary method"/>
+      </Section>
+    </div>
+  );
+}
+
 // ═══════════ REIMBURSEMENT POLICY ═══════════
 function ReimbursementPolicyForm({data,onChange}){
   var d=data;function set(k,v){onChange({...d,[k]:v});}
@@ -400,6 +470,7 @@ export default function PolicyPage(){
   function renderForm(){
     if(activeTab==='leave') return <LeavePolicyForm data={formData} onChange={setFormData}/>;
     if(activeTab==='attendance') return <AttendancePolicyForm data={formData} onChange={setFormData} shifts={shifts}/>;
+    if(activeTab==='attendance_collection') return <AttendanceCollectionForm data={formData} onChange={setFormData}/>;
     if(activeTab==='overtime') return <OvertimePolicyForm data={formData} onChange={setFormData}/>;
     if(activeTab==='reimbursement') return <ReimbursementPolicyForm data={formData} onChange={setFormData}/>;
     return <GenericPolicyForm data={formData} onChange={setFormData} type={activeTab}/>;

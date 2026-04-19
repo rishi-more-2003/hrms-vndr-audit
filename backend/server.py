@@ -691,33 +691,40 @@ async def get_designations(current_user: dict = Depends(get_current_user)):
     return [DesignationResponse(**desig) for desig in designations]
 
 
-# ══════════════════════  ATTENDANCE  ══════════════════════
+# ══════════════════════  ATTENDANCE (ENHANCED)  ══════════════════════
+COLLECTION_METHODS = ["self_clockin", "admin_entry", "employee_month_end", "manager_month_end",
+                      "biometric_fingerprint", "biometric_face", "geo_tagged", "card_tap", "manual_time_select"]
+ENTRY_STATUSES = ["active", "pending_approval", "approved", "rejected"]
+
 @api_router.post("/attendance/clock-in")
-async def clock_in(current_user: dict = Depends(get_current_user)):
+async def clock_in(method: str = "self_clockin", current_user: dict = Depends(get_current_user)):
     emp = await get_employee_by_user_id(current_user["id"])
     if not emp:
         raise HTTPException(status_code=400, detail="Employee profile not found")
     today = datetime.now(timezone.utc).date().isoformat()
-    existing = await db.attendance.find_one({"employee_id": emp["id"], "date": today}, {"_id": 0})
-    if existing:
+    existing = await db.attendance.find_one({"employee_id": emp["id"], "date": today, "is_active": True}, {"_id": 0})
+    if existing and existing.get("clock_in") and not existing.get("clock_out"):
         raise HTTPException(status_code=400, detail="Already clocked in today")
     att_id = str(uuid.uuid4())
     att_doc = {
         "id": att_id, "employee_id": emp["id"], "date": today,
         "clock_in": datetime.now(timezone.utc).isoformat(),
         "clock_out": None, "total_hours": None,
-        "status": AttendanceStatus.PRESENT, "notes": None
+        "status": AttendanceStatus.PRESENT, "notes": None,
+        "collection_method": method, "entry_status": "active",
+        "entered_by": current_user["id"], "is_active": True,
+        "approval_status": None, "approved_by": None
     }
     await db.attendance.insert_one(att_doc)
     return {"message": "Clocked in successfully", "attendance": {k: v for k, v in att_doc.items() if k != "_id"}}
 
 @api_router.post("/attendance/clock-out")
-async def clock_out(current_user: dict = Depends(get_current_user)):
+async def clock_out(method: str = "self_clockin", current_user: dict = Depends(get_current_user)):
     emp = await get_employee_by_user_id(current_user["id"])
     if not emp:
         raise HTTPException(status_code=400, detail="Employee profile not found")
     today = datetime.now(timezone.utc).date().isoformat()
-    existing = await db.attendance.find_one({"employee_id": emp["id"], "date": today}, {"_id": 0})
+    existing = await db.attendance.find_one({"employee_id": emp["id"], "date": today, "is_active": True}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=400, detail="No clock-in record found")
     if existing.get("clock_out"):
@@ -727,19 +734,232 @@ async def clock_out(current_user: dict = Depends(get_current_user)):
     total_hours = (clock_out_time - clock_in_time).total_seconds() / 3600
     await db.attendance.update_one(
         {"id": existing["id"]},
-        {"$set": {"clock_out": clock_out_time.isoformat(), "total_hours": round(total_hours, 2)}}
+        {"$set": {"clock_out": clock_out_time.isoformat(), "total_hours": round(total_hours, 2),
+                  "collection_method_out": method}}
     )
     return {"message": "Clocked out successfully", "total_hours": round(total_hours, 2)}
 
-@api_router.get("/attendance", response_model=List[AttendanceResponse])
-async def get_attendance(employee_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+# Manual time entry (employee selects date + times, pending approval)
+@api_router.post("/attendance/manual-entry")
+async def manual_attendance_entry(data: dict, current_user: dict = Depends(get_current_user)):
+    emp = await get_employee_by_user_id(current_user["id"])
+    if not emp:
+        raise HTTPException(status_code=400, detail="Employee profile not found")
+    date = data.get("date")
+    clock_in_time = data.get("clock_in")
+    clock_out_time = data.get("clock_out")
+    reason = data.get("reason", "")
+    if not date or not clock_in_time:
+        raise HTTPException(status_code=400, detail="Date and clock-in time required")
+    total_hours = None
+    if clock_in_time and clock_out_time:
+        try:
+            ci = datetime.fromisoformat(clock_in_time)
+            co = datetime.fromisoformat(clock_out_time)
+            total_hours = round((co - ci).total_seconds() / 3600, 2)
+        except Exception:
+            pass
+    att_id = str(uuid.uuid4())
+    needs_approval = data.get("needs_approval", True)
+    att_doc = {
+        "id": att_id, "employee_id": emp["id"], "date": date,
+        "clock_in": clock_in_time, "clock_out": clock_out_time,
+        "total_hours": total_hours, "status": AttendanceStatus.PRESENT,
+        "notes": reason, "collection_method": "manual_time_select",
+        "entry_status": "pending_approval" if needs_approval else "active",
+        "entered_by": current_user["id"], "is_active": True,
+        "approval_status": "pending" if needs_approval else "approved",
+        "approved_by": None
+    }
+    await db.attendance.insert_one(att_doc)
+    return {"message": "Manual entry submitted" + (" (pending approval)" if needs_approval else ""),
+            "attendance": {k: v for k, v in att_doc.items() if k != "_id"}}
+
+# Admin/Manager entry for an employee
+@api_router.post("/attendance/admin-entry")
+async def admin_attendance_entry(data: dict, current_user: dict = Depends(get_current_user)):
+    employee_id = data.get("employee_id")
+    if not employee_id:
+        raise HTTPException(status_code=400, detail="employee_id required")
+    if not await can_approve(current_user["id"], employee_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    date = data.get("date")
+    clock_in_time = data.get("clock_in")
+    clock_out_time = data.get("clock_out")
+    total_hours = None
+    if clock_in_time and clock_out_time:
+        try:
+            ci = datetime.fromisoformat(clock_in_time)
+            co = datetime.fromisoformat(clock_out_time)
+            total_hours = round((co - ci).total_seconds() / 3600, 2)
+        except Exception:
+            pass
+    att_id = str(uuid.uuid4())
+    att_doc = {
+        "id": att_id, "employee_id": employee_id, "date": date,
+        "clock_in": clock_in_time, "clock_out": clock_out_time,
+        "total_hours": total_hours, "status": AttendanceStatus.PRESENT,
+        "notes": data.get("reason", ""), "collection_method": "admin_entry",
+        "entry_status": "active", "entered_by": current_user["id"],
+        "is_active": True, "approval_status": "approved", "approved_by": current_user["id"]
+    }
+    await db.attendance.insert_one(att_doc)
+    return {"message": "Attendance entered for employee", "attendance": {k: v for k, v in att_doc.items() if k != "_id"}}
+
+# Bulk month-end entry
+@api_router.post("/attendance/bulk-entry")
+async def bulk_attendance_entry(data: dict, current_user: dict = Depends(get_current_user)):
+    employee_id = data.get("employee_id")
+    entries = data.get("entries", [])  # [{date, clock_in, clock_out}, ...]
+    entry_by = data.get("entry_by", "employee")  # "employee" or "manager"
+    needs_approval = data.get("needs_approval", True)
+
+    if entry_by == "employee":
+        emp = await get_employee_by_user_id(current_user["id"])
+        if not emp:
+            raise HTTPException(status_code=400, detail="Employee not found")
+        employee_id = emp["id"]
+    elif not await can_approve(current_user["id"], employee_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    method = "employee_month_end" if entry_by == "employee" else "manager_month_end"
+    count = 0
+    for entry in entries:
+        total_hours = None
+        if entry.get("clock_in") and entry.get("clock_out"):
+            try:
+                ci = datetime.fromisoformat(entry["clock_in"])
+                co = datetime.fromisoformat(entry["clock_out"])
+                total_hours = round((co - ci).total_seconds() / 3600, 2)
+            except Exception:
+                pass
+        att_id = str(uuid.uuid4())
+        att_doc = {
+            "id": att_id, "employee_id": employee_id, "date": entry.get("date"),
+            "clock_in": entry.get("clock_in"), "clock_out": entry.get("clock_out"),
+            "total_hours": total_hours, "status": AttendanceStatus.PRESENT,
+            "notes": entry.get("notes", ""), "collection_method": method,
+            "entry_status": "pending_approval" if needs_approval else "active",
+            "entered_by": current_user["id"], "is_active": True,
+            "approval_status": "pending" if needs_approval else "approved",
+            "approved_by": None
+        }
+        # Upsert: replace if date exists
+        existing = await db.attendance.find_one({"employee_id": employee_id, "date": entry.get("date")}, {"_id": 0})
+        if existing:
+            await db.attendance.update_one({"id": existing["id"]}, {"$set": att_doc})
+        else:
+            await db.attendance.insert_one(att_doc)
+        count += 1
+    return {"message": f"{count} entries submitted", "needs_approval": needs_approval}
+
+# Missed punch correction
+@api_router.post("/attendance/missed-punch")
+async def missed_punch_request(data: dict, current_user: dict = Depends(get_current_user)):
+    emp = await get_employee_by_user_id(current_user["id"])
+    if not emp:
+        raise HTTPException(status_code=400, detail="Employee not found")
+    date = data.get("date")
+    punch_type = data.get("punch_type", "clock_out")  # clock_in or clock_out
+    punch_time = data.get("punch_time")
+    reason = data.get("reason", "")
+    req_id = str(uuid.uuid4())
+    req_doc = {
+        "id": req_id, "employee_id": emp["id"], "date": date,
+        "punch_type": punch_type, "punch_time": punch_time,
+        "reason": reason, "status": "pending",
+        "requested_by": current_user["id"],
+        "approved_by": None, "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.missed_punches.insert_one(req_doc)
+    # Notify manager
+    if emp.get("reports_to"):
+        mgr = await db.employees.find_one({"id": emp["reports_to"]}, {"_id": 0})
+        if mgr:
+            await create_notification(mgr["user_id"], "Missed Punch Request",
+                f"{emp['first_name']} {emp['last_name']} requested a missed {punch_type} correction for {date}", "info")
+    return {"message": "Missed punch request submitted", "id": req_id}
+
+@api_router.get("/attendance/missed-punches")
+async def get_missed_punches(current_user: dict = Depends(get_current_user)):
     if current_user["role"] == UserRole.ADMIN:
-        query = {"employee_id": employee_id} if employee_id else {}
+        punches = await db.missed_punches.find({}, {"_id": 0}).to_list(1000)
+    else:
+        emp = await get_employee_by_user_id(current_user["id"])
+        if not emp:
+            return []
+        sub_ids = [e["id"] for e in await db.employees.find({"reports_to": emp["id"]}, {"_id": 0}).to_list(1000)]
+        all_ids = [emp["id"]] + sub_ids
+        punches = await db.missed_punches.find({"employee_id": {"$in": all_ids}}, {"_id": 0}).to_list(1000)
+    return punches
+
+@api_router.put("/attendance/missed-punches/{req_id}/approve")
+async def approve_missed_punch(req_id: str, current_user: dict = Depends(get_current_user)):
+    req = await db.missed_punches.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if not await can_approve(current_user["id"], req["employee_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    # Apply the correction
+    att = await db.attendance.find_one({"employee_id": req["employee_id"], "date": req["date"]}, {"_id": 0})
+    if att:
+        update_data = {req["punch_type"]: req["punch_time"]}
+        if req["punch_type"] == "clock_out" and att.get("clock_in"):
+            try:
+                ci = datetime.fromisoformat(att["clock_in"])
+                co = datetime.fromisoformat(req["punch_time"])
+                update_data["total_hours"] = round((co - ci).total_seconds() / 3600, 2)
+            except Exception:
+                pass
+        await db.attendance.update_one({"id": att["id"]}, {"$set": update_data})
+    await db.missed_punches.update_one({"id": req_id}, {"$set": {"status": "approved", "approved_by": current_user["id"]}})
+    # Notify employee
+    emp = await db.employees.find_one({"id": req["employee_id"]}, {"_id": 0})
+    if emp:
+        await create_notification(emp["user_id"], "Missed Punch Approved",
+            f"Your missed {req['punch_type']} for {req['date']} has been approved.", "success")
+    return {"message": "Missed punch approved and applied"}
+
+@api_router.put("/attendance/missed-punches/{req_id}/reject")
+async def reject_missed_punch(req_id: str, current_user: dict = Depends(get_current_user)):
+    req = await db.missed_punches.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    await db.missed_punches.update_one({"id": req_id}, {"$set": {"status": "rejected", "approved_by": current_user["id"]}})
+    return {"message": "Missed punch rejected"}
+
+# Approve pending attendance entries
+@api_router.put("/attendance/{att_id}/approve")
+async def approve_attendance_entry(att_id: str, current_user: dict = Depends(get_current_user)):
+    att = await db.attendance.find_one({"id": att_id}, {"_id": 0})
+    if not att:
+        raise HTTPException(status_code=404, detail="Attendance entry not found")
+    if not await can_approve(current_user["id"], att["employee_id"]):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    await db.attendance.update_one({"id": att_id}, {"$set": {"entry_status": "active", "approval_status": "approved", "approved_by": current_user["id"]}})
+    return {"message": "Attendance entry approved"}
+
+@api_router.put("/attendance/{att_id}/reject")
+async def reject_attendance_entry(att_id: str, current_user: dict = Depends(get_current_user)):
+    att = await db.attendance.find_one({"id": att_id}, {"_id": 0})
+    if not att:
+        raise HTTPException(status_code=404, detail="Attendance entry not found")
+    await db.attendance.update_one({"id": att_id}, {"$set": {"entry_status": "rejected", "approval_status": "rejected", "approved_by": current_user["id"]}})
+    return {"message": "Attendance entry rejected"}
+
+@api_router.get("/attendance")
+async def get_attendance(employee_id: Optional[str] = None, month: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] == UserRole.ADMIN:
+        query = {}
+        if employee_id:
+            query["employee_id"] = employee_id
     else:
         emp = await get_employee_by_user_id(current_user["id"])
         query = {"employee_id": emp["id"]} if emp else {"employee_id": "none"}
-    attendance = await db.attendance.find(query, {"_id": 0}).to_list(1000)
-    return [AttendanceResponse(**att) for att in attendance]
+    if month:
+        query["date"] = {"$regex": f"^{month}"}
+    attendance = await db.attendance.find(query, {"_id": 0}).sort("date", -1).to_list(1000)
+    return attendance
 
 
 # ══════════════════════  LEAVES  ══════════════════════
@@ -1359,6 +1579,7 @@ TEMPLATE_COLLECTIONS = {
 POLICY_COLLECTIONS = {
     "leave": "leave_policy_templates",
     "attendance": "attendance_policy_templates",
+    "attendance_collection": "att_collection_policy_templates",
     "overtime": "overtime_policy_templates",
     "reimbursement": "reimbursement_policy_templates",
     "bonus": "bonus_policy_templates",

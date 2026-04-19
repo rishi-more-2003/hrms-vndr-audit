@@ -4,27 +4,42 @@
 - Frontend: React 19 + Tailwind + Shadcn/UI + Phosphor Icons
 - Backend: FastAPI + MongoDB, Auth: JWT, Storage: Emergent Object Storage
 
-## Implemented (Phases 1-5)
+## Implemented (Phases 1-6)
 
-### Core: Two-tier auth, permissions, hierarchy, CRUD, attendance, leave, reimbursements, recruitment, performance
-### Indian Compliance: PF/ESIC/TDS/PT calculator, leave balance, documents, notifications, onboarding
-### Organization: Setup wizard, locations, grades, levels, shifts
-### Statutory Compliance: PF/ESIC/PT/LWF/TDS templates with conditional fields, bulk assign
-### Policy Management (9 types):
+### Phase 1-3: Core HRMS, Indian Compliance, Organization & Statutory Compliance
+### Phase 4-5: Policy Management (10 types), Enhanced Attendance Policy
 
-**Leave Policy**: 6 leave types (CL/SL/EL/ML/PL/WFH) with frequency, application window, carry forward, encashment, clubbing, earned leave credit cycle, sick leave medical docs + auto-approval, maternity/paternity eligibility, WFH pay type, sandwich rule, holiday calendar
+### Phase 6 - Attendance Collection & Management
+**Attendance Collection Policy Template** (new policy type):
+- 8 collection methods (4 active + 4 hardware placeholders):
+  - Self Clock-in/out, Admin/Manager Entry, Employee Month-End, Manager Month-End
+  - Biometric FP, Face Scan, Geo-tagged, Card Tap (hardware ready)
+- Primary/fallback method configuration, cross-method toggle
+- Self clock-in settings: real-time only vs manual time selection (with approval)
+- Month-end entry deadlines for employee and manager
+- Missed punch: allowed toggle, approval required, correction window, monthly limit
+- Double login/WFH method configuration
 
-**Attendance Policy (Enhanced)**: Pay basis, month day calc (actual/fixed with discrepancy warning + 4 handling options), salary cycle, week offs (paid/unpaid + day selector), duty hours, late comer penalty (warning/half-day/quarter-day/proportional/accumulated), early departure penalty, double login handling (with manager approval for re-login), auto-logout (buffer + manager/employee alerts), shift-specific rules (grace/half-day/quarter-day/min hours/auto-absent), comp-off, biometric
+**Enhanced Attendance Backend APIs**:
+- POST /api/attendance/clock-in (with method param) - real-time
+- POST /api/attendance/clock-out (with method param)
+- POST /api/attendance/manual-entry - employee selects date/times, pending approval
+- POST /api/attendance/admin-entry - admin enters for any employee
+- POST /api/attendance/bulk-entry - month-end bulk with upsert
+- POST /api/attendance/missed-punch - correction request with reason
+- GET/PUT /api/attendance/missed-punches - CRUD + approve/reject
+- PUT /api/attendance/{id}/approve|reject - entry approval
+- Every record tracks: collection_method, entry_status, approval_status, entered_by
 
-**Overtime Policy**: Allowed toggle, fixed/calculative rates, OT factors (1x/1.5x/2x/3x/custom), actual/fixed day calculation basis, per-day/week/month/quarter caps, pre-approval, manager alerts, holiday OT rates
-
-**Reimbursement Policy**: Claims allowed, min/max amounts, frequency limits, document requirements, direct/manager/hybrid approval modes with auto-approve thresholds, multi-level approval
-
-**Bonus Policy**: Statutory/performance/festival/annual types, % of basic/gross/CTC, min days eligibility, statutory min/max, pro-rata
-**Gratuity Policy**: Min years service, factor (15 days default), salary basis, max amount, auto-calc on exit
-**Incentive Policy**: Fixed/percentage/slab/target-based, payment frequency, min target achievement, pro-rata
-**Advance Policy**: Max % of salary, max amount, repayment months, interest, approval
-**Loan Policy**: Max amount, salary multiple, repayment, simple/reducing interest, EMI deduction, multiple loans
+**Enhanced Attendance Frontend**:
+- Real-time Clock In/Out with method tracking
+- Manual Time Entry dialog (date + in/out time, pending approval)
+- Missed Punch Request dialog (date, punch type, correct time, reason)
+- Admin Entry dialog (select employee, enter attendance)
+- Month-End Bulk Entry dialog (full month table with all days)
+- **Dual View**: Table (sortable, method + status columns) + Calendar (color-coded grid)
+- Month selector, Pending Approvals section for admin/managers
+- Collection method displayed on each record ("via Self Clock-in", "Admin Entry", etc.)
 
 ## Test Credentials
 - Admin: admin@hrms.com / admin123
