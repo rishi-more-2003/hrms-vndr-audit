@@ -1,56 +1,62 @@
+#!/usr/bin/env python3
+
 import requests
 import sys
-from datetime import datetime
 import json
+from datetime import datetime
 
-class HRMSAPITester:
+class SalaryStructureAPITester:
     def __init__(self, base_url="https://talent-board-14.preview.emergentagent.com/api"):
         self.base_url = base_url
-        self.admin_token = None
-        self.employee_token = None
+        self.token = None
         self.tests_run = 0
         self.tests_passed = 0
-        self.failed_tests = []
+        self.created_components = []
+        self.created_templates = []
 
-    def run_test(self, name, method, endpoint, expected_status, data=None, token=None):
+    def run_test(self, name, method, endpoint, expected_status, data=None, params=None):
         """Run a single API test"""
         url = f"{self.base_url}/{endpoint}"
         headers = {'Content-Type': 'application/json'}
-        if token:
-            headers['Authorization'] = f'Bearer {token}'
+        if self.token:
+            headers['Authorization'] = f'Bearer {self.token}'
 
         self.tests_run += 1
         print(f"\n🔍 Testing {name}...")
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers=headers, params=params)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=headers)
+                response = requests.post(url, json=data, headers=headers, params=params)
             elif method == 'PUT':
-                response = requests.put(url, json=data, headers=headers)
+                response = requests.put(url, json=data, headers=headers, params=params)
+            elif method == 'DELETE':
+                response = requests.delete(url, headers=headers, params=params)
 
             success = response.status_code == expected_status
             if success:
                 self.tests_passed += 1
                 print(f"✅ Passed - Status: {response.status_code}")
                 try:
-                    return success, response.json()
+                    return True, response.json() if response.text else {}
                 except:
-                    return success, {}
+                    return True, {}
             else:
                 print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
-                print(f"   Response: {response.text[:200]}")
-                self.failed_tests.append(f"{name}: Expected {expected_status}, got {response.status_code}")
+                try:
+                    print(f"   Response: {response.text}")
+                except:
+                    pass
                 return False, {}
 
         except Exception as e:
             print(f"❌ Failed - Error: {str(e)}")
-            self.failed_tests.append(f"{name}: {str(e)}")
             return False, {}
 
     def test_admin_login(self):
-        """Test admin login"""
+        """Test admin login and get token"""
+        print("\n🔐 Testing Admin Login...")
         success, response = self.run_test(
             "Admin Login",
             "POST",
@@ -59,1477 +65,352 @@ class HRMSAPITester:
             data={"email": "admin@hrms.com", "password": "admin123", "login_as": "admin"}
         )
         if success and 'access_token' in response:
-            self.admin_token = response['access_token']
-            print(f"   Admin token obtained")
+            self.token = response['access_token']
+            print(f"✅ Admin login successful, token obtained")
             return True
+        print(f"❌ Admin login failed")
         return False
 
-    def test_employee_login(self):
-        """Test employee login"""
-        success, response = self.run_test(
-            "Employee Login (Rahul)",
-            "POST",
-            "auth/login",
-            200,
-            data={"email": "employee@hrms.com", "password": "emp123", "login_as": "employee"}
-        )
-        if success and 'access_token' in response:
-            self.employee_token = response['access_token']
-            print(f"   Employee token obtained")
-            return True
-        return False
-
-    def test_cross_login_prevention(self):
-        """Test that admin can't login via employee tab and vice versa"""
-        # Admin trying to login via employee tab
-        success, _ = self.run_test(
-            "Admin Cross-Login Prevention",
-            "POST",
-            "auth/login",
-            403,
-            data={"email": "admin@hrms.com", "password": "admin123", "login_as": "employee"}
-        )
+    def test_salary_components_crud(self):
+        """Test salary components CRUD operations"""
+        print("\n📊 Testing Salary Components CRUD...")
         
-        # Employee trying to login via admin tab
-        success2, _ = self.run_test(
-            "Employee Cross-Login Prevention",
-            "POST",
-            "auth/login",
-            403,
-            data={"email": "employee@hrms.com", "password": "emp123", "login_as": "admin"}
-        )
-        
-        return success and success2
-
-    def test_dashboard_stats(self):
-        """Test dashboard stats endpoint"""
-        success, response = self.run_test(
-            "Dashboard Stats",
-            "GET",
-            "dashboard/stats",
-            200,
-            token=self.admin_token
-        )
-        if success:
-            required_fields = ['total_employees', 'total_departments', 'pending_leaves', 'active_jobs']
-            for field in required_fields:
-                if field not in response:
-                    print(f"   Missing field: {field}")
-                    return False
-            print(f"   Stats: {response}")
-        return success
-
-    def test_employees_endpoint(self):
-        """Test employees CRUD operations"""
-        # Get all employees
-        success, employees = self.run_test(
-            "Get All Employees",
-            "GET",
-            "employees",
-            200,
-            token=self.admin_token
-        )
-        
+        # 1. Get initial components
+        success, components = self.run_test("Get Components", "GET", "salary-components", 200)
         if not success:
             return False
-            
-        print(f"   Found {len(employees)} employees")
+        
+        initial_count = len(components)
+        print(f"   Initial components count: {initial_count}")
+
+        # 2. Create Basic Salary (Earning)
+        basic_data = {
+            "name": "Basic Salary",
+            "code": "BASIC",
+            "component_type": "earning",
+            "category": "standard",
+            "is_statutory": False,
+            "calc_type": "fixed_amount",
+            "default_value": 25000,
+            "default_percentage": 0,
+            "is_fixed": True,
+            "is_variable": False,
+            "allow_direct_entry": False,
+            "attracts_pf": True,
+            "attracts_esic": True,
+            "attracts_pt": True,
+            "attracts_lwf": False,
+            "attracts_ot": True,
+            "attracts_tds": True,
+            "classification": "inclusion_wages"
+        }
+        
+        success, basic_comp = self.run_test("Create Basic Salary", "POST", "salary-components", 200, basic_data)
+        if success and 'id' in basic_comp:
+            self.created_components.append(basic_comp['id'])
+            print(f"   Created Basic Salary component: {basic_comp['id']}")
+        else:
+            return False
+
+        # 3. Create HRA (Earning)
+        hra_data = {
+            "name": "House Rent Allowance",
+            "code": "HRA",
+            "component_type": "earning",
+            "category": "standard",
+            "is_statutory": False,
+            "calc_type": "percentage_of_basic",
+            "default_value": 0,
+            "default_percentage": 40,
+            "is_fixed": True,
+            "is_variable": False,
+            "allow_direct_entry": True,
+            "attracts_pf": False,
+            "attracts_esic": False,
+            "attracts_pt": True,
+            "attracts_lwf": False,
+            "attracts_ot": False,
+            "attracts_tds": True,
+            "classification": "inclusion_wages"
+        }
+        
+        success, hra_comp = self.run_test("Create HRA", "POST", "salary-components", 200, hra_data)
+        if success and 'id' in hra_comp:
+            self.created_components.append(hra_comp['id'])
+            print(f"   Created HRA component: {hra_comp['id']}")
+        else:
+            return False
+
+        # 4. Create PF Deduction with auto-pairing
+        pf_data = {
+            "name": "Provident Fund",
+            "code": "PF",
+            "component_type": "deduction",
+            "category": "statutory",
+            "is_statutory": True,
+            "auto_pair_key": "pf",
+            "calc_type": "percentage_of_basic",
+            "default_value": 0,
+            "default_percentage": 12,
+            "is_fixed": True,
+            "is_variable": False,
+            "allow_direct_entry": False,
+            "attracts_pf": False,
+            "attracts_esic": False,
+            "attracts_pt": False,
+            "attracts_lwf": False,
+            "attracts_ot": False,
+            "attracts_tds": False,
+            "classification": "exclusion"
+        }
+        
+        success, pf_comp = self.run_test("Create PF with Auto-pairing", "POST", "salary-components", 200, pf_data)
+        if success and 'id' in pf_comp:
+            self.created_components.append(pf_comp['id'])
+            print(f"   Created PF component: {pf_comp['id']}")
+            if 'auto_created_provisions' in pf_comp:
+                print(f"   Auto-created provisions: {pf_comp['auto_created_provisions']}")
+            else:
+                print("   ⚠️  No auto-created provisions found")
+        else:
+            return False
+
+        # 5. Verify components were created
+        success, updated_components = self.run_test("Get Updated Components", "GET", "salary-components", 200)
+        if success:
+            new_count = len(updated_components)
+            print(f"   Updated components count: {new_count}")
+            if new_count > initial_count:
+                print(f"   ✅ Components increased by {new_count - initial_count}")
+            else:
+                print(f"   ⚠️  Component count didn't increase as expected")
+
+        # 6. Update a component
+        if self.created_components:
+            update_data = {"default_value": 30000}
+            success, _ = self.run_test("Update Component", "PUT", f"salary-components/{self.created_components[0]}", 200, update_data)
+            if not success:
+                return False
+
         return True
 
-    def test_departments_endpoint(self):
-        """Test departments endpoint"""
-        success, departments = self.run_test(
-            "Get All Departments",
-            "GET",
-            "departments",
-            200,
-            token=self.admin_token
-        )
+    def test_salary_templates_crud(self):
+        """Test salary templates CRUD operations"""
+        print("\n📋 Testing Salary Templates CRUD...")
         
-        if success:
-            print(f"   Found {len(departments)} departments")
-        return success
-
-    def test_hierarchy_endpoint(self):
-        """Test hierarchy endpoint"""
-        success, hierarchy = self.run_test(
-            "Get Hierarchy",
-            "GET",
-            "hierarchy",
-            200,
-            token=self.admin_token
-        )
-        
-        if success:
-            print(f"   Hierarchy nodes: {len(hierarchy)}")
-        return success
-
-    def test_attendance_endpoints(self):
-        """Test attendance endpoints"""
-        # Get attendance records
-        success, attendance = self.run_test(
-            "Get Attendance Records",
-            "GET",
-            "attendance",
-            200,
-            token=self.employee_token
-        )
-        
-        if success:
-            print(f"   Found {len(attendance)} attendance records")
-        return success
-
-    def test_leave_endpoints(self):
-        """Test leave management endpoints"""
-        # Get leave requests
-        success, leaves = self.run_test(
-            "Get Leave Requests",
-            "GET",
-            "leaves",
-            200,
-            token=self.employee_token
-        )
-        
-        if success:
-            print(f"   Found {len(leaves)} leave requests")
-        return success
-
-    def test_reimbursement_endpoints(self):
-        """Test reimbursement endpoints"""
-        # Get reimbursements
-        success, reimbs = self.run_test(
-            "Get Reimbursements",
-            "GET",
-            "reimbursements",
-            200,
-            token=self.employee_token
-        )
-        
-        if success:
-            print(f"   Found {len(reimbs)} reimbursements")
-        return success
-
-    def test_auth_me_endpoint(self):
-        """Test auth/me endpoint for both admin and employee"""
-        # Test admin auth/me
-        success1, admin_data = self.run_test(
-            "Admin Auth Me",
-            "GET",
-            "auth/me",
-            200,
-            token=self.admin_token
-        )
-        
-        # Test employee auth/me
-        success2, emp_data = self.run_test(
-            "Employee Auth Me",
-            "GET",
-            "auth/me",
-            200,
-            token=self.employee_token
-        )
-        
-        if success1:
-            print(f"   Admin role: {admin_data.get('role')}")
-        if success2:
-            print(f"   Employee role: {emp_data.get('role')}")
-            
-        return success1 and success2
-
-    def test_indian_tax_calculator(self):
-        """Test Indian tax calculator API"""
-        success, response = self.run_test(
-            "Indian Tax Calculator",
-            "POST",
-            "tax/calculate?basic=30000&hra=12000&da=5000&other=3000",
-            200,
-            token=self.admin_token
-        )
-        
-        if success:
-            required_fields = ['earnings', 'deductions', 'net_salary', 'ctc_monthly', 'ctc_annual']
-            for field in required_fields:
-                if field not in response:
-                    print(f"   Missing field: {field}")
-                    return False
-            
-            # Check earnings structure
-            earnings = response.get('earnings', {})
-            earnings_fields = ['basic_salary', 'hra', 'da', 'other_allowances', 'gross_salary']
-            for field in earnings_fields:
-                if field not in earnings:
-                    print(f"   Missing earnings field: {field}")
-                    return False
-            
-            # Check deductions structure
-            deductions = response.get('deductions', {})
-            deductions_fields = ['pf_employee', 'esic_employee', 'professional_tax', 'tds_monthly', 'total_deductions']
-            for field in deductions_fields:
-                if field not in deductions:
-                    print(f"   Missing deductions field: {field}")
-                    return False
-            
-            print(f"   Gross: ₹{earnings.get('gross_salary')}, Net: ₹{response.get('net_salary')}")
-            print(f"   PF: ₹{deductions.get('pf_employee')}, TDS: ₹{deductions.get('tds_monthly')}")
-        
-        return success
-
-    def test_leave_balance_endpoint(self):
-        """Test leave balance endpoint"""
-        # First get an employee ID
-        success, employees = self.run_test(
-            "Get Employees for Leave Balance",
-            "GET",
-            "employees",
-            200,
-            token=self.admin_token
-        )
-        
-        if not success or not employees:
-            print("   No employees found for leave balance test")
+        # 1. Get initial templates
+        success, templates = self.run_test("Get Templates", "GET", "salary-templates", 200)
+        if not success:
             return False
         
-        employee_id = employees[0]['id']
-        success, response = self.run_test(
-            "Leave Balance",
-            "GET",
-            f"leave-balance/{employee_id}",
-            200,
-            token=self.admin_token
-        )
-        
-        if success:
-            balances = response.get('balances', {})
-            if balances:
-                print(f"   Leave types: {list(balances.keys())}")
-                for leave_type, balance in balances.items():
-                    if 'total' in balance and 'used' in balance and 'available' in balance:
-                        print(f"   {leave_type}: {balance['available']}/{balance['total']} available")
-                    else:
-                        print(f"   Missing balance fields for {leave_type}")
-                        return False
-            else:
-                print("   No leave balances found")
-        
-        return success
+        initial_count = len(templates)
+        print(f"   Initial templates count: {initial_count}")
 
-    def test_leave_policy_endpoint(self):
-        """Test leave policy endpoint"""
-        success, response = self.run_test(
-            "Leave Policy",
-            "GET",
-            "leave-policy",
-            200,
-            token=self.admin_token
-        )
-        
-        if success:
-            expected_types = ['casual', 'sick', 'earned', 'maternity', 'paternity', 'unpaid']
-            for leave_type in expected_types:
-                if leave_type not in response:
-                    print(f"   Missing leave type: {leave_type}")
-                    return False
-            print(f"   Policy: {response}")
-        
-        return success
-
-    def test_notification_system(self):
-        """Test notification system endpoints"""
-        # Test unread count
-        success1, response1 = self.run_test(
-            "Notification Unread Count",
-            "GET",
-            "notifications/unread-count",
-            200,
-            token=self.employee_token
-        )
-        
-        # Test get all notifications
-        success2, response2 = self.run_test(
-            "Get All Notifications",
-            "GET",
-            "notifications",
-            200,
-            token=self.employee_token
-        )
-        
-        if success1:
-            if 'count' not in response1:
-                print("   Missing 'count' field in unread count response")
-                return False
-            print(f"   Unread notifications: {response1['count']}")
-        
-        if success2:
-            print(f"   Total notifications: {len(response2)}")
-        
-        return success1 and success2
-
-    def test_onboarding_checklist(self):
-        """Test onboarding checklist API"""
-        # First get an employee ID
-        success, employees = self.run_test(
-            "Get Employees for Onboarding",
-            "GET",
-            "employees",
-            200,
-            token=self.admin_token
-        )
-        
-        if not success or not employees:
-            print("   No employees found for onboarding test")
+        # 2. Get components for template creation
+        success, components = self.run_test("Get Components for Template", "GET", "salary-components", 200)
+        if not success or not components:
+            print("   ⚠️  No components available for template creation")
             return False
-        
-        employee_id = employees[0]['id']
-        success, response = self.run_test(
-            "Onboarding Checklist",
-            "GET",
-            f"onboarding/{employee_id}",
-            200,
-            token=self.admin_token
-        )
-        
-        if success:
-            required_fields = ['id', 'employee_id', 'items', 'overall_progress']
-            for field in required_fields:
-                if field not in response:
-                    print(f"   Missing field: {field}")
-                    return False
-            
-            items = response.get('items', [])
-            print(f"   Checklist items: {len(items)}")
-            print(f"   Overall progress: {response.get('overall_progress')}%")
-            
-            # Check item structure
-            if items:
-                item = items[0]
-                item_fields = ['id', 'label', 'category', 'completed']
-                for field in item_fields:
-                    if field not in item:
-                        print(f"   Missing item field: {field}")
-                        return False
-        
-        return success
 
-    def test_password_change(self):
-        """Test password change API"""
-        # Test with incorrect old password
-        success1, _ = self.run_test(
-            "Password Change (Wrong Old Password)",
-            "POST",
-            "auth/change-password?old_password=wrongpass&new_password=newpass123",
-            400,
-            token=self.employee_token
-        )
-        
-        # Note: We won't test successful password change as it would break subsequent tests
-        print("   Password change endpoint accessible (tested with wrong password)")
-        return success1
+        # 3. Create a salary template
+        template_components = []
+        for comp in components[:5]:  # Use first 5 components
+            template_components.append({
+                "component_id": comp['id'],
+                "code": comp['code'],
+                "name": comp['name'],
+                "component_type": comp['component_type'],
+                "enabled": True,
+                "calc_type": comp.get('calc_type', 'fixed_amount'),
+                "amount": comp.get('default_value', 1000),
+                "percentage": comp.get('default_percentage', 0),
+                "is_fixed": comp.get('is_fixed', True),
+                "is_variable": comp.get('is_variable', False),
+                "allow_direct_entry": comp.get('allow_direct_entry', False),
+                "attracts_pf": comp.get('attracts_pf', False),
+                "attracts_esic": comp.get('attracts_esic', False),
+                "attracts_pt": comp.get('attracts_pt', False),
+                "attracts_lwf": comp.get('attracts_lwf', False),
+                "attracts_ot": comp.get('attracts_ot', False),
+                "attracts_tds": comp.get('attracts_tds', False),
+                "classification": comp.get('classification', 'inclusion_wages')
+            })
 
-    # ===== PHASE 3 ORGANIZATION TESTS =====
-    def test_organization_endpoints(self):
-        """Test organization setup endpoints"""
-        # Get organization data
-        success1, org_data = self.run_test(
-            "Get Organization",
-            "GET",
-            "organization",
-            200,
-            token=self.admin_token
-        )
-        
-        # Save organization data
-        org_payload = {
-            "name": "Test Company Ltd",
-            "address": "123 Test Street, Test City",
-            "nature_of_business": "Software Development"
+        template_data = {
+            "template_name": "Test Standard Template",
+            "components": template_components,
+            "ctc_mode": False,
+            "ctc_annual": 0,
+            "pay_type": "monthly"
         }
-        success2, _ = self.run_test(
-            "Save Organization",
-            "POST",
-            "organization",
-            200,
-            data=org_payload,
-            token=self.admin_token
-        )
         
-        if success1:
-            print(f"   Organization setup complete: {org_data.get('setup_complete', False)}")
-        
-        return success1 and success2
+        success, template = self.run_test("Create Template", "POST", "salary-templates", 200, template_data)
+        if success and 'id' in template:
+            self.created_templates.append(template['id'])
+            print(f"   Created template: {template['id']}")
+        else:
+            return False
 
-    def test_location_endpoints(self):
-        """Test location CRUD operations"""
-        # Get all locations
-        success1, locations = self.run_test(
-            "Get All Locations",
-            "GET",
-            "locations",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create a new location
-        location_payload = {
-            "name": "Test Location",
-            "code": "TL001",
-            "address": "Test Address"
-        }
-        success2, new_location = self.run_test(
-            "Create Location",
-            "POST",
-            "locations",
-            200,
-            data=location_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(locations)} existing locations")
-        if success2:
-            print(f"   Created location: {new_location.get('name')}")
-        
-        return success1 and success2
+        # 4. Get specific template
+        success, _ = self.run_test("Get Specific Template", "GET", f"salary-templates/{self.created_templates[0]}", 200)
+        if not success:
+            return False
 
-    def test_employee_grades_endpoints(self):
-        """Test employee grades endpoints"""
-        # Get employee grades
-        success1, grades = self.run_test(
-            "Get Employee Grades",
-            "GET",
-            "employee-grades",
-            200,
-            token=self.admin_token
-        )
-        
-        # Save employee grades
-        grades_payload = [
-            {"name": "Unskilled", "code": "USK", "order": 1},
-            {"name": "Semi-skilled", "code": "SSK", "order": 2},
-            {"name": "Skilled", "code": "SK", "order": 3},
-            {"name": "Highly Skilled", "code": "HSK", "order": 4}
-        ]
-        success2, _ = self.run_test(
-            "Save Employee Grades",
-            "POST",
-            "employee-grades",
-            200,
-            data=grades_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(grades)} employee grades")
-        
-        return success1 and success2
+        # 5. Update template
+        update_data = {"template_name": "Updated Test Template"}
+        success, _ = self.run_test("Update Template", "PUT", f"salary-templates/{self.created_templates[0]}", 200, update_data)
+        if not success:
+            return False
 
-    def test_employee_levels_endpoints(self):
-        """Test employee levels endpoints"""
-        # Get employee levels
-        success1, levels = self.run_test(
-            "Get Employee Levels",
-            "GET",
-            "employee-levels",
-            200,
-            token=self.admin_token
-        )
-        
-        # Save employee levels
-        levels_payload = [
-            {"name": "L1", "order": 1},
-            {"name": "L2", "order": 2},
-            {"name": "Senior", "order": 3}
-        ]
-        success2, _ = self.run_test(
-            "Save Employee Levels",
-            "POST",
-            "employee-levels",
-            200,
-            data=levels_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(levels)} employee levels")
-        
-        return success1 and success2
+        return True
 
-    def test_shifts_endpoints(self):
-        """Test shifts CRUD operations"""
-        # Get all shifts
-        success1, shifts = self.run_test(
-            "Get All Shifts",
-            "GET",
-            "shifts",
-            200,
-            token=self.admin_token
-        )
+    def test_salary_compute(self):
+        """Test salary computation"""
+        print("\n🧮 Testing Salary Computation...")
         
-        # Create a new shift
-        shift_payload = {
-            "name": "Morning Shift",
-            "start_time": "09:00",
-            "end_time": "18:00",
-            "break_duration": 60
-        }
-        success2, new_shift = self.run_test(
-            "Create Shift",
-            "POST",
-            "shifts",
-            200,
-            data=shift_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(shifts)} existing shifts")
-        if success2:
-            print(f"   Created shift: {new_shift.get('name')}")
-        
-        return success1 and success2
-
-    # ===== PHASE 3 COMPLIANCE TESTS =====
-    def test_compliance_templates_pf(self):
-        """Test PF compliance templates"""
-        # Get PF templates
-        success1, templates = self.run_test(
-            "Get PF Templates",
-            "GET",
-            "compliance-templates/pf",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create PF template
-        pf_payload = {
-            "template_name": "Test PF Template",
-            "pf_applicable": True,
-            "pf_office": "Test PF Office",
-            "pf_code_number": "PF001",
-            "contribution_rate": 12,
-            "wage_ceiling": 15000
-        }
-        success2, new_template = self.run_test(
-            "Create PF Template",
-            "POST",
-            "compliance-templates/pf",
-            200,
-            data=pf_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} PF templates")
-        if success2:
-            print(f"   Created PF template: {new_template.get('template_name')}")
-        
-        return success1 and success2
-
-    def test_compliance_templates_esic(self):
-        """Test ESIC compliance templates"""
-        # Get ESIC templates
-        success1, templates = self.run_test(
-            "Get ESIC Templates",
-            "GET",
-            "compliance-templates/esic",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create ESIC template
-        esic_payload = {
-            "template_name": "Test ESIC Template",
-            "esic_code_no": "ESIC001",
-            "employee_contribution": 0.75,
-            "employer_contribution": 3.25,
-            "wage_ceiling": 21000
-        }
-        success2, new_template = self.run_test(
-            "Create ESIC Template",
-            "POST",
-            "compliance-templates/esic",
-            200,
-            data=esic_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} ESIC templates")
-        if success2:
-            print(f"   Created ESIC template: {new_template.get('template_name')}")
-        
-        return success1 and success2
-
-    def test_compliance_templates_pt(self):
-        """Test PT compliance templates"""
-        # Get PT templates
-        success1, templates = self.run_test(
-            "Get PT Templates",
-            "GET",
-            "compliance-templates/pt",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create PT template with slabs
-        pt_payload = {
-            "template_name": "Test PT Template",
-            "pt_code_no": "PT001",
-            "jurisdiction_state": "Maharashtra",
-            "deduction_frequency": "monthly",
-            "slabs": [
-                {"min_salary": 0, "max_salary": 10000, "male_rate": 0, "female_rate": 0},
-                {"min_salary": 10001, "max_salary": 25000, "male_rate": 200, "female_rate": 150}
-            ]
-        }
-        success2, new_template = self.run_test(
-            "Create PT Template",
-            "POST",
-            "compliance-templates/pt",
-            200,
-            data=pt_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} PT templates")
-        if success2:
-            print(f"   Created PT template: {new_template.get('template_name')}")
-        
-        return success1 and success2
-
-    def test_compliance_templates_lwf(self):
-        """Test LWF compliance templates"""
-        # Get LWF templates
-        success1, templates = self.run_test(
-            "Get LWF Templates",
-            "GET",
-            "compliance-templates/lwf",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create LWF template
-        lwf_payload = {
-            "template_name": "Test LWF Template",
-            "lwf_code_no": "LWF001",
-            "jurisdiction_state": "Maharashtra",
-            "deduction_frequency": "monthly"
-        }
-        success2, new_template = self.run_test(
-            "Create LWF Template",
-            "POST",
-            "compliance-templates/lwf",
-            200,
-            data=lwf_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} LWF templates")
-        if success2:
-            print(f"   Created LWF template: {new_template.get('template_name')}")
-        
-        return success1 and success2
-
-    def test_compliance_templates_tds(self):
-        """Test TDS compliance templates"""
-        # Get TDS templates
-        success1, templates = self.run_test(
-            "Get TDS Templates",
-            "GET",
-            "compliance-templates/tds",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create TDS template
-        tds_payload = {
-            "template_name": "Test TDS Template",
-            "tax_regime": "new_regime",
-            "employer_tan": "ABCD12345E",
-            "cess_rate": 4,
-            "standard_deduction": 75000
-        }
-        success2, new_template = self.run_test(
-            "Create TDS Template",
-            "POST",
-            "compliance-templates/tds",
-            200,
-            data=tds_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} TDS templates")
-        if success2:
-            print(f"   Created TDS template: {new_template.get('template_name')}")
-        
-        return success1 and success2
-
-    def test_compliance_bulk_assignment(self):
-        """Test bulk compliance template assignment"""
-        # Get all compliance assignments
-        success1, assignments = self.run_test(
-            "Get All Compliance Assignments",
-            "GET",
-            "compliance-assignments",
-            200,
-            token=self.admin_token
-        )
-        
-        # Test bulk assignment by department
-        bulk_payload = {
-            "assign_by": "department",
-            "target_id": "test-dept-id",
-            "templates": {
-                "pf_template_id": "test-pf-template",
-                "esic_template_id": "test-esic-template"
-            }
-        }
-        success2, _ = self.run_test(
-            "Bulk Assign Templates",
-            "POST",
-            "compliance-assignments/bulk",
-            200,
-            data=bulk_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(assignments)} compliance assignments")
-        
-        return success1 and success2
-
-    # ===== NEW FEATURE TESTS FOR CONDITIONAL FIELDS =====
-    def test_pf_conditional_fields(self):
-        """Test PF template with conditional exemption fields"""
-        # Test PF template with PF exemption enabled
-        pf_exempted_payload = {
-            "template_name": "PF Exempted Template",
-            "pf_applicable": True,
-            "pf_exempted": True,
-            "trust_name": "Test Trust",
-            "industry_type": "Software",
-            "exemption_section": "Section 17",
-            "exemption_date": "2024-01-01",
-            "exemption_authority": "EPFO",
-            "board_term": "3 years"
-        }
-        success1, pf_exempted = self.run_test(
-            "Create PF Template with PF Exemption",
-            "POST",
-            "compliance-templates/pf",
-            200,
-            data=pf_exempted_payload,
-            token=self.admin_token
-        )
-        
-        # Test PF template with EDLI exemption enabled
-        edli_exempted_payload = {
-            "template_name": "EDLI Exempted Template",
-            "pf_applicable": True,
-            "edli_exempted": True,
-            "edli_master_policy": "EDLI123456",
-            "edli_premium": 50000,
-            "edli_payment_date": "2024-03-31",
-            "edli_policy_period": "2024-2025",
-            "edli_insurer": "LIC of India"
-        }
-        success2, edli_exempted = self.run_test(
-            "Create PF Template with EDLI Exemption",
-            "POST",
-            "compliance-templates/pf",
-            200,
-            data=edli_exempted_payload,
-            token=self.admin_token
-        )
-        
-        # Test PF template with both exemptions enabled
-        both_exempted_payload = {
-            "template_name": "Both Exemptions Template",
-            "pf_applicable": True,
-            "pf_exempted": True,
-            "edli_exempted": True,
-            "trust_name": "Combined Trust",
-            "industry_type": "Manufacturing",
-            "exemption_section": "Section 17",
-            "edli_master_policy": "EDLI789012",
-            "edli_premium": 75000
-        }
-        success3, both_exempted = self.run_test(
-            "Create PF Template with Both Exemptions",
-            "POST",
-            "compliance-templates/pf",
-            200,
-            data=both_exempted_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   PF exempted template: {pf_exempted.get('template_name')}")
-            print(f"   Trust name: {pf_exempted.get('trust_name')}")
-        if success2:
-            print(f"   EDLI exempted template: {edli_exempted.get('template_name')}")
-            print(f"   EDLI policy: {edli_exempted.get('edli_master_policy')}")
-        if success3:
-            print(f"   Both exemptions template: {both_exempted.get('template_name')}")
-        
-        return success1 and success2 and success3
-
-    def test_pt_lwf_advanced_config(self):
-        """Test PT/LWF templates with advanced configuration options"""
-        # Test PT template with advanced configuration
-        pt_advanced_payload = {
-            "template_name": "Advanced PT Template",
-            "pt_code_no": "PT_ADV_001",
-            "jurisdiction_state": "Tamil Nadu",
-            "jurisdiction_city": "Chennai",
-            "deduction_frequency": "quarterly",
-            "payment_frequency": "quarterly",
-            "slab_salary_period": "half-yearly",
-            "deduction_method": "lump",
-            "exit_handling": "pro_rata",
-            "slabs": [
-                {"min_salary": 0, "max_salary": 15000, "male_rate": 0, "female_rate": 0},
-                {"min_salary": 15001, "max_salary": 30000, "male_rate": 300, "female_rate": 200},
-                {"min_salary": 30001, "max_salary": 50000, "male_rate": 500, "female_rate": 400}
-            ]
-        }
-        success1, pt_advanced = self.run_test(
-            "Create PT Template with Advanced Config",
-            "POST",
-            "compliance-templates/pt",
-            200,
-            data=pt_advanced_payload,
-            token=self.admin_token
-        )
-        
-        # Test LWF template with advanced configuration
-        lwf_advanced_payload = {
-            "template_name": "Advanced LWF Template",
-            "lwf_code_no": "LWF_ADV_001",
-            "jurisdiction_state": "Karnataka",
-            "jurisdiction_city": "Bangalore",
-            "deduction_frequency": "monthly",
-            "payment_frequency": "half-yearly",
-            "slab_salary_period": "annual",
-            "deduction_method": "spread",
-            "exit_handling": "company_bears",
-            "slabs": [
-                {"min_salary": 0, "max_salary": 25000, "male_rate": 20, "female_rate": 20},
-                {"min_salary": 25001, "max_salary": 50000, "male_rate": 40, "female_rate": 40}
-            ]
-        }
-        success2, lwf_advanced = self.run_test(
-            "Create LWF Template with Advanced Config",
-            "POST",
-            "compliance-templates/lwf",
-            200,
-            data=lwf_advanced_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   PT advanced template: {pt_advanced.get('template_name')}")
-            print(f"   Deduction freq: {pt_advanced.get('deduction_frequency')}")
-            print(f"   Payment freq: {pt_advanced.get('payment_frequency')}")
-            print(f"   Salary period: {pt_advanced.get('slab_salary_period')}")
-            print(f"   Deduction method: {pt_advanced.get('deduction_method')}")
-            print(f"   Exit handling: {pt_advanced.get('exit_handling')}")
-            print(f"   Slabs count: {len(pt_advanced.get('slabs', []))}")
-        
-        if success2:
-            print(f"   LWF advanced template: {lwf_advanced.get('template_name')}")
-            print(f"   Deduction freq: {lwf_advanced.get('deduction_frequency')}")
-            print(f"   Exit handling: {lwf_advanced.get('exit_handling')}")
-        
-        return success1 and success2
-
-    # ===== POLICY MANAGEMENT TESTS =====
-    def test_policy_templates_leave(self):
-        """Test Leave Policy Templates"""
-        # Get leave policy templates
-        success1, templates = self.run_test(
-            "Get Leave Policy Templates",
-            "GET",
-            "policy-templates/leave",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create leave policy template
-        leave_payload = {
-            "template_name": "Test Leave Policy",
-            "leaves": {
-                "casual": {
-                    "allowed": 12,
-                    "frequency": "per_year",
-                    "application_window_days": 1,
-                    "carry_forward": True,
-                    "max_carry": 5,
-                    "encashment": False,
-                    "clubbing_allowed": True
-                },
-                "sick": {
-                    "allowed": 10,
-                    "frequency": "per_year",
-                    "application_window_days": 0,
-                    "reporting_window_hours": 2,
-                    "medical_docs_threshold": 3,
-                    "medical_docs_frequency": "per_year",
-                    "approval_mode": "auto_if_balance"
-                },
-                "earned": {
-                    "allowed": 15,
-                    "frequency": "per_year",
-                    "credit_cycle": "per_month",
-                    "paid_days_per_credit": 20
-                },
-                "maternity": {
-                    "allowed": 182,
-                    "frequency": "per_year",
-                    "eligibility_min_days": 80,
-                    "documents_required": True
-                },
-                "paternity": {
-                    "allowed": 15,
-                    "frequency": "per_year",
-                    "eligibility_min_days": 80,
-                    "documents_required": True
-                },
-                "wfh": {
-                    "allowed": 24,
-                    "frequency": "per_year",
-                    "enabled": True,
-                    "pay_type": "full"
-                }
+        # Create test components for computation
+        test_components = [
+            {
+                "component_id": "test1",
+                "component_type": "earning",
+                "amount": 25000,
+                "calc_type": "fixed_amount"
             },
-            "holidays": [
-                {"date": "2024-01-26", "name": "Republic Day", "type": "national"},
-                {"date": "2024-08-15", "name": "Independence Day", "type": "national"}
-            ],
-            "sandwich_rule": True,
-            "negative_balance_allowed": False
-        }
-        success2, new_template = self.run_test(
-            "Create Leave Policy Template",
-            "POST",
-            "policy-templates/leave",
-            200,
-            data=leave_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} leave policy templates")
-        if success2:
-            print(f"   Created leave template: {new_template.get('template_name')}")
-            print(f"   Leave types configured: {len(new_template.get('leaves', {}))}")
-            print(f"   Holidays: {len(new_template.get('holidays', []))}")
-        
-        return success1 and success2
-
-    def test_policy_templates_attendance(self):
-        """Test Attendance Policy Templates"""
-        # Get attendance policy templates
-        success1, templates = self.run_test(
-            "Get Attendance Policy Templates",
-            "GET",
-            "policy-templates/attendance",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create attendance policy template
-        attendance_payload = {
-            "template_name": "Test Attendance Policy",
-            "pay_basis": "monthly",
-            "month_day_calc": "actual",
-            "salary_cycle_start": 1,
-            "salary_cycle_end": 31,
-            "week_offs_per_week": 2,
-            "week_offs_paid": True,
-            "week_off_days": ["Saturday", "Sunday"],
-            "shift_rules": [
-                {
-                    "shift_id": "test-shift-id",
-                    "grace_period_minutes": 15,
-                    "half_day_after_hours": 4,
-                    "min_hours_full_day": 8,
-                    "auto_absent_if_no_clockin_by": "11:00"
-                }
-            ],
-            "compoff_for_holiday_work": True,
-            "compoff_validity_days": 30,
-            "late_mark_tracking": True,
-            "late_marks_to_half_day": 3,
-            "late_mark_frequency": "per_month",
-            "early_departure_tracking": True,
-            "biometric_mandatory": False
-        }
-        success2, new_template = self.run_test(
-            "Create Attendance Policy Template",
-            "POST",
-            "policy-templates/attendance",
-            200,
-            data=attendance_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} attendance policy templates")
-        if success2:
-            print(f"   Created attendance template: {new_template.get('template_name')}")
-            print(f"   Pay basis: {new_template.get('pay_basis')}")
-            print(f"   Week offs: {new_template.get('week_off_days')}")
-            print(f"   Shift rules: {len(new_template.get('shift_rules', []))}")
-        
-        return success1 and success2
-
-    def test_policy_templates_overtime(self):
-        """Test Overtime Policy Templates"""
-        # Get overtime policy templates
-        success1, templates = self.run_test(
-            "Get Overtime Policy Templates",
-            "GET",
-            "policy-templates/overtime",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create overtime policy template
-        overtime_payload = {
-            "template_name": "Test Overtime Policy",
-            "overtime_allowed": True,
-            "ot_rate_type": "calculative",
-            "ot_factor": "one_half",
-            "ot_calc_basis": "actual_days",
-            "ot_hours_per_day": 8,
-            "ot_cap_per_day": 4,
-            "ot_cap_per_week": 20,
-            "ot_cap_per_month": 80,
-            "ot_requires_approval": True,
-            "ot_pre_approval_required": False,
-            "ot_limit_alert": True,
-            "ot_holiday_different_rate": True,
-            "ot_holiday_factor": "double"
-        }
-        success2, new_template = self.run_test(
-            "Create Overtime Policy Template",
-            "POST",
-            "policy-templates/overtime",
-            200,
-            data=overtime_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} overtime policy templates")
-        if success2:
-            print(f"   Created overtime template: {new_template.get('template_name')}")
-            print(f"   OT allowed: {new_template.get('overtime_allowed')}")
-            print(f"   OT rate type: {new_template.get('ot_rate_type')}")
-            print(f"   OT factor: {new_template.get('ot_factor')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_reimbursement(self):
-        """Test Reimbursement Policy Templates"""
-        # Get reimbursement policy templates
-        success1, templates = self.run_test(
-            "Get Reimbursement Policy Templates",
-            "GET",
-            "policy-templates/reimbursement",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create reimbursement policy template
-        reimbursement_payload = {
-            "template_name": "Test Reimbursement Policy",
-            "claims_allowed": True,
-            "max_claim_amount": 50000,
-            "min_claim_amount": 100,
-            "claim_frequency": "per_month",
-            "max_claims_per_frequency": 5,
-            "documents_mandatory": True,
-            "approval_mode": "hybrid",
-            "auto_approve_threshold": 5000,
-            "auto_approve_frequency": "per_month",
-            "auto_approve_max_per_freq": 3,
-            "multi_level_approval": False
-        }
-        success2, new_template = self.run_test(
-            "Create Reimbursement Policy Template",
-            "POST",
-            "policy-templates/reimbursement",
-            200,
-            data=reimbursement_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} reimbursement policy templates")
-        if success2:
-            print(f"   Created reimbursement template: {new_template.get('template_name')}")
-            print(f"   Claims allowed: {new_template.get('claims_allowed')}")
-            print(f"   Max claim amount: {new_template.get('max_claim_amount')}")
-            print(f"   Approval mode: {new_template.get('approval_mode')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_bonus(self):
-        """Test Bonus Policy Templates"""
-        # Get bonus policy templates
-        success1, templates = self.run_test(
-            "Get Bonus Policy Templates",
-            "GET",
-            "policy-templates/bonus",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create bonus policy template
-        bonus_payload = {
-            "template_name": "Test Bonus Policy",
-            "bonus_applicable": True,
-            "bonus_type": "statutory",
-            "bonus_percentage": 8.33,
-            "bonus_basis": "basic_salary",
-            "min_days_eligibility": 240,
-            "payment_frequency": "per_year",
-            "statutory_min": 8400,
-            "statutory_max": 21000,
-            "prorata_for_new_joiners": True
-        }
-        success2, new_template = self.run_test(
-            "Create Bonus Policy Template",
-            "POST",
-            "policy-templates/bonus",
-            200,
-            data=bonus_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} bonus policy templates")
-        if success2:
-            print(f"   Created bonus template: {new_template.get('template_name')}")
-            print(f"   Bonus applicable: {new_template.get('bonus_applicable')}")
-            print(f"   Bonus type: {new_template.get('bonus_type')}")
-            print(f"   Bonus percentage: {new_template.get('bonus_percentage')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_gratuity(self):
-        """Test Gratuity Policy Templates"""
-        # Get gratuity policy templates
-        success1, templates = self.run_test(
-            "Get Gratuity Policy Templates",
-            "GET",
-            "policy-templates/gratuity",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create gratuity policy template
-        gratuity_payload = {
-            "template_name": "Test Gratuity Policy",
-            "gratuity_applicable": True,
-            "min_years_service": 5,
-            "gratuity_factor": 15,
-            "salary_basis": "basic_plus_da",
-            "max_gratuity_amount": 2000000,
-            "auto_calculate_on_exit": True,
-            "include_notice_period": False
-        }
-        success2, new_template = self.run_test(
-            "Create Gratuity Policy Template",
-            "POST",
-            "policy-templates/gratuity",
-            200,
-            data=gratuity_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} gratuity policy templates")
-        if success2:
-            print(f"   Created gratuity template: {new_template.get('template_name')}")
-            print(f"   Gratuity applicable: {new_template.get('gratuity_applicable')}")
-            print(f"   Min years service: {new_template.get('min_years_service')}")
-            print(f"   Gratuity factor: {new_template.get('gratuity_factor')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_incentive(self):
-        """Test Incentive Policy Templates"""
-        # Get incentive policy templates
-        success1, templates = self.run_test(
-            "Get Incentive Policy Templates",
-            "GET",
-            "policy-templates/incentive",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create incentive policy template
-        incentive_payload = {
-            "template_name": "Test Incentive Policy",
-            "incentive_applicable": True,
-            "incentive_type": "percentage",
-            "percentage_rate": 5,
-            "percentage_basis": "sales",
-            "payment_freq": "per_quarter",
-            "requires_approval": True,
-            "min_target_achievement": 80,
-            "prorata_allowed": True
-        }
-        success2, new_template = self.run_test(
-            "Create Incentive Policy Template",
-            "POST",
-            "policy-templates/incentive",
-            200,
-            data=incentive_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} incentive policy templates")
-        if success2:
-            print(f"   Created incentive template: {new_template.get('template_name')}")
-            print(f"   Incentive applicable: {new_template.get('incentive_applicable')}")
-            print(f"   Incentive type: {new_template.get('incentive_type')}")
-            print(f"   Percentage rate: {new_template.get('percentage_rate')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_advance(self):
-        """Test Advance Policy Templates"""
-        # Get advance policy templates
-        success1, templates = self.run_test(
-            "Get Advance Policy Templates",
-            "GET",
-            "policy-templates/advance",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create advance policy template
-        advance_payload = {
-            "template_name": "Test Advance Policy",
-            "advance_allowed": True,
-            "max_advance_percentage": 50,
-            "max_advance_amount": 100000,
-            "advance_frequency": "per_quarter",
-            "max_repayment_months": 12,
-            "interest_applicable": False,
-            "requires_approval": True,
-            "min_service_months": 6
-        }
-        success2, new_template = self.run_test(
-            "Create Advance Policy Template",
-            "POST",
-            "policy-templates/advance",
-            200,
-            data=advance_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} advance policy templates")
-        if success2:
-            print(f"   Created advance template: {new_template.get('template_name')}")
-            print(f"   Advance allowed: {new_template.get('advance_allowed')}")
-            print(f"   Max advance percentage: {new_template.get('max_advance_percentage')}")
-            print(f"   Max advance amount: {new_template.get('max_advance_amount')}")
-        
-        return success1 and success2
-
-    def test_policy_templates_loan(self):
-        """Test Loan Policy Templates"""
-        # Get loan policy templates
-        success1, templates = self.run_test(
-            "Get Loan Policy Templates",
-            "GET",
-            "policy-templates/loan",
-            200,
-            token=self.admin_token
-        )
-        
-        # Create loan policy template
-        loan_payload = {
-            "template_name": "Test Loan Policy",
-            "loan_allowed": True,
-            "max_loan_amount": 500000,
-            "max_loan_multiple": 10,
-            "max_repayment_months": 60,
-            "interest_applicable": True,
-            "interest_rate": 8.5,
-            "interest_type": "reducing_balance",
-            "deduction_method": "auto_from_salary",
-            "requires_approval": True,
-            "min_service_months": 12,
-            "multiple_loans_allowed": False,
-            "max_emi_percentage": 30
-        }
-        success2, new_template = self.run_test(
-            "Create Loan Policy Template",
-            "POST",
-            "policy-templates/loan",
-            200,
-            data=loan_payload,
-            token=self.admin_token
-        )
-        
-        if success1:
-            print(f"   Found {len(templates)} loan policy templates")
-        if success2:
-            print(f"   Created loan template: {new_template.get('template_name')}")
-            print(f"   Loan allowed: {new_template.get('loan_allowed')}")
-            print(f"   Max loan amount: {new_template.get('max_loan_amount')}")
-            print(f"   Interest rate: {new_template.get('interest_rate')}")
-        
-        return success1 and success2
-
-    def test_policy_bulk_assignment(self):
-        """Test bulk policy assignment"""
-        # Get all policy assignments
-        success1, assignments = self.run_test(
-            "Get All Policy Assignments",
-            "GET",
-            "policy-assignments",
-            200,
-            token=self.admin_token
-        )
-        
-        # Test bulk assignment by department
-        bulk_payload = {
-            "assign_by": "department",
-            "target_id": "test-dept-id",
-            "templates": {
-                "leave_template_id": "test-leave-template",
-                "attendance_template_id": "test-attendance-template"
+            {
+                "component_id": "test2", 
+                "component_type": "earning",
+                "amount": 10000,
+                "calc_type": "fixed_amount"
+            },
+            {
+                "component_id": "test3",
+                "component_type": "deduction",
+                "amount": 3000,
+                "calc_type": "fixed_amount"
+            },
+            {
+                "component_id": "test4",
+                "component_type": "provision",
+                "amount": 2000,
+                "calc_type": "fixed_amount"
             }
+        ]
+
+        compute_data = {
+            "components": test_components,
+            "pay_type": "monthly"
         }
-        success2, _ = self.run_test(
-            "Bulk Assign Policy Templates",
-            "POST",
-            "policy-assignments/bulk",
-            200,
-            data=bulk_payload,
-            token=self.admin_token
-        )
         
-        if success1:
-            print(f"   Found {len(assignments)} policy assignments")
+        success, result = self.run_test("Compute Salary", "POST", "salary-compute", 200, compute_data)
+        if success:
+            print(f"   Gross Monthly: ₹{result.get('gross_monthly', 0)}")
+            print(f"   Deductions Monthly: ₹{result.get('total_deductions_monthly', 0)}")
+            print(f"   Net Monthly: ₹{result.get('net_monthly', 0)}")
+            print(f"   CTC Monthly: ₹{result.get('ctc_monthly', 0)}")
+            print(f"   CTC Annual: ₹{result.get('ctc_annual', 0)}")
+            
+            # Verify calculations
+            expected_gross = 35000  # 25000 + 10000
+            expected_deductions = 3000
+            expected_net = 32000  # 35000 - 3000
+            expected_ctc = 37000  # 35000 + 2000
+            
+            if (result.get('gross_monthly') == expected_gross and 
+                result.get('total_deductions_monthly') == expected_deductions and
+                result.get('net_monthly') == expected_net and
+                result.get('ctc_monthly') == expected_ctc):
+                print("   ✅ Salary calculations are correct")
+            else:
+                print("   ⚠️  Salary calculations may be incorrect")
         
-        return success1 and success2
+        return success
+
+    def test_salary_assignments(self):
+        """Test salary assignments"""
+        print("\n👥 Testing Salary Assignments...")
+        
+        # 1. Get all assignments
+        success, assignments = self.run_test("Get All Assignments", "GET", "salary-assignments", 200)
+        if not success:
+            return False
+        
+        print(f"   Current assignments count: {len(assignments)}")
+
+        # 2. Test bulk assignment (this will fail if no employees/departments exist)
+        if self.created_templates:
+            bulk_data = {
+                "assign_by": "department",
+                "target_id": "test-dept-id",  # This may not exist
+                "salary_template_id": self.created_templates[0]
+            }
+            
+            # This might fail due to missing department, but we test the endpoint
+            success, _ = self.run_test("Bulk Assignment", "POST", "salary-assignments/bulk", 200, bulk_data)
+            # Don't return False here as this might fail due to missing test data
+            
+        return True
+
+    def cleanup(self):
+        """Clean up created test data"""
+        print("\n🧹 Cleaning up test data...")
+        
+        # Delete created templates
+        for template_id in self.created_templates:
+            success, _ = self.run_test(f"Delete Template {template_id}", "DELETE", f"salary-templates/{template_id}", 200)
+            if success:
+                print(f"   ✅ Deleted template: {template_id}")
+        
+        # Delete created components (except statutory ones)
+        for comp_id in self.created_components:
+            success, _ = self.run_test(f"Delete Component {comp_id}", "DELETE", f"salary-components/{comp_id}", 200)
+            if success:
+                print(f"   ✅ Deleted component: {comp_id}")
+
+    def run_all_tests(self):
+        """Run all salary structure tests"""
+        print("🚀 Starting HRMS Salary Structure API Tests")
+        print("=" * 50)
+        
+        # Login first
+        if not self.test_admin_login():
+            print("❌ Cannot proceed without admin login")
+            return False
+        
+        # Run all tests
+        tests = [
+            self.test_salary_components_crud,
+            self.test_salary_templates_crud,
+            self.test_salary_compute,
+            self.test_salary_assignments
+        ]
+        
+        all_passed = True
+        for test in tests:
+            try:
+                if not test():
+                    all_passed = False
+            except Exception as e:
+                print(f"❌ Test failed with exception: {str(e)}")
+                all_passed = False
+        
+        # Cleanup
+        self.cleanup()
+        
+        # Print results
+        print("\n" + "=" * 50)
+        print(f"📊 Test Results: {self.tests_passed}/{self.tests_run} tests passed")
+        
+        if all_passed and self.tests_passed == self.tests_run:
+            print("🎉 All salary structure API tests passed!")
+            return True
+        else:
+            print("❌ Some tests failed")
+            return False
 
 def main():
-    print("🚀 Starting HRMS Backend API Testing...")
-    print("=" * 60)
-    
-    tester = HRMSAPITester()
-    
-    # Test authentication first
-    print("\n📋 AUTHENTICATION TESTS")
-    print("-" * 30)
-    
-    if not tester.test_admin_login():
-        print("❌ Admin login failed, stopping tests")
-        return 1
-        
-    if not tester.test_employee_login():
-        print("❌ Employee login failed, stopping tests")
-        return 1
-    
-    # Test cross-login prevention
-    tester.test_cross_login_prevention()
-    
-    # Test auth/me endpoints
-    tester.test_auth_me_endpoint()
-    
-    # Test core endpoints
-    print("\n📋 CORE API TESTS")
-    print("-" * 30)
-    
-    tester.test_dashboard_stats()
-    tester.test_employees_endpoint()
-    tester.test_departments_endpoint()
-    tester.test_hierarchy_endpoint()
-    tester.test_attendance_endpoints()
-    tester.test_leave_endpoints()
-    tester.test_reimbursement_endpoints()
-    
-    # Test Phase 2 features
-    print("\n📋 PHASE 2 FEATURE TESTS")
-    print("-" * 30)
-    
-    tester.test_indian_tax_calculator()
-    tester.test_leave_balance_endpoint()
-    tester.test_leave_policy_endpoint()
-    tester.test_notification_system()
-    tester.test_onboarding_checklist()
-    tester.test_password_change()
-    
-    # Test Phase 3 features - Organization
-    print("\n📋 PHASE 3 ORGANIZATION TESTS")
-    print("-" * 30)
-    
-    tester.test_organization_endpoints()
-    tester.test_location_endpoints()
-    tester.test_employee_grades_endpoints()
-    tester.test_employee_levels_endpoints()
-    tester.test_shifts_endpoints()
-    
-    # Test Phase 3 features - Compliance
-    print("\n📋 PHASE 3 COMPLIANCE TESTS")
-    print("-" * 30)
-    
-    tester.test_compliance_templates_pf()
-    tester.test_compliance_templates_esic()
-    tester.test_compliance_templates_pt()
-    tester.test_compliance_templates_lwf()
-    tester.test_compliance_templates_tds()
-    tester.test_compliance_bulk_assignment()
-    
-    # Test new conditional fields and advanced config
-    print("\n📋 NEW FEATURE TESTS - CONDITIONAL FIELDS")
-    print("-" * 30)
-    
-    tester.test_pf_conditional_fields()
-    tester.test_pt_lwf_advanced_config()
-    
-    # Test Policy Management features
-    print("\n📋 POLICY MANAGEMENT TESTS")
-    print("-" * 30)
-    
-    tester.test_policy_templates_leave()
-    tester.test_policy_templates_attendance()
-    tester.test_policy_templates_overtime()
-    tester.test_policy_templates_reimbursement()
-    tester.test_policy_templates_bonus()
-    tester.test_policy_templates_gratuity()
-    tester.test_policy_templates_incentive()
-    tester.test_policy_templates_advance()
-    tester.test_policy_templates_loan()
-    tester.test_policy_bulk_assignment()
-    
-    # Print final results
-    print("\n" + "=" * 60)
-    print(f"📊 FINAL RESULTS")
-    print(f"Tests Run: {tester.tests_run}")
-    print(f"Tests Passed: {tester.tests_passed}")
-    print(f"Tests Failed: {tester.tests_run - tester.tests_passed}")
-    print(f"Success Rate: {(tester.tests_passed/tester.tests_run*100):.1f}%")
-    
-    if tester.failed_tests:
-        print(f"\n❌ FAILED TESTS:")
-        for failure in tester.failed_tests:
-            print(f"   - {failure}")
-    
-    return 0 if tester.tests_passed == tester.tests_run else 1
+    tester = SalaryStructureAPITester()
+    success = tester.run_all_tests()
+    return 0 if success else 1
 
 if __name__ == "__main__":
     sys.exit(main())

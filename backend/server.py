@@ -1765,6 +1765,171 @@ async def get_all_policy_assignments(current_user: dict = Depends(get_current_us
     return await db.policy_assignments.find({}, {"_id": 0}).to_list(1000)
 
 
+# ══════════════════════  SALARY STRUCTURE  ══════════════════════
+# Auto-paired components: adding a deduction auto-creates related provisions
+AUTO_PAIRS = {
+    "pf": ["pf_employer_provision", "pf_admin_charges_provision", "pf_edli_charges_provision"],
+    "esic": ["esic_employer_provision"],
+    "lwf": ["lwf_employer_provision"],
+}
+
+# Salary Components Library
+@api_router.get("/salary-components")
+async def get_salary_components(current_user: dict = Depends(get_current_user)):
+    return await db.salary_components.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.post("/salary-components")
+async def create_salary_component(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salary_components.insert_one(data)
+    result = {k: v for k, v in data.items() if k != "_id"}
+    # Auto-pair: if deduction with auto_pair_key, create provision components
+    pair_key = data.get("auto_pair_key")
+    if pair_key and pair_key in AUTO_PAIRS:
+        auto_created = []
+        for prov_code in AUTO_PAIRS[pair_key]:
+            existing = await db.salary_components.find_one({"code": prov_code}, {"_id": 0})
+            if not existing:
+                prov = {
+                    "id": str(uuid.uuid4()), "code": prov_code,
+                    "name": prov_code.replace("_", " ").title(),
+                    "component_type": "provision", "category": "statutory",
+                    "is_statutory": True, "paired_with": data["id"],
+                    "calc_type": "percentage", "default_value": 0,
+                    "is_fixed": True, "allow_direct_entry": False,
+                    "attracts_pf": False, "attracts_esic": False, "attracts_pt": False,
+                    "attracts_lwf": False, "attracts_ot": False, "attracts_tds": False,
+                    "classification": "others",
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                await db.salary_components.insert_one(prov)
+                auto_created.append(prov_code)
+        result["auto_created_provisions"] = auto_created
+    return result
+
+@api_router.put("/salary-components/{comp_id}")
+async def update_salary_component(comp_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salary_components.update_one({"id": comp_id}, {"$set": data})
+    return {"message": "Component updated"}
+
+@api_router.delete("/salary-components/{comp_id}")
+async def delete_salary_component(comp_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.salary_components.delete_one({"id": comp_id})
+    return {"message": "Component deleted"}
+
+# Salary Templates
+@api_router.get("/salary-templates")
+async def get_salary_templates(current_user: dict = Depends(get_current_user)):
+    return await db.salary_templates.find({}, {"_id": 0}).to_list(1000)
+
+@api_router.get("/salary-templates/{template_id}")
+async def get_salary_template(template_id: str, current_user: dict = Depends(get_current_user)):
+    t = await db.salary_templates.find_one({"id": template_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return t
+
+@api_router.post("/salary-templates")
+async def create_salary_template(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salary_templates.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+@api_router.put("/salary-templates/{template_id}")
+async def update_salary_template(template_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salary_templates.update_one({"id": template_id}, {"$set": data})
+    return {"message": "Template updated"}
+
+@api_router.delete("/salary-templates/{template_id}")
+async def delete_salary_template(template_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.salary_templates.delete_one({"id": template_id})
+    return {"message": "Template deleted"}
+
+# Salary Template Assignments
+@api_router.get("/salary-assignments/{employee_id}")
+async def get_salary_assignment(employee_id: str, current_user: dict = Depends(get_current_user)):
+    a = await db.salary_assignments.find_one({"employee_id": employee_id}, {"_id": 0})
+    return a or {"employee_id": employee_id}
+
+@api_router.put("/salary-assignments/{employee_id}")
+async def update_salary_assignment(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["employee_id"] = employee_id
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salary_assignments.update_one({"employee_id": employee_id}, {"$set": data}, upsert=True)
+    return {"message": "Salary template assigned"}
+
+@api_router.post("/salary-assignments/bulk")
+async def bulk_assign_salary(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    assign_by = data.get("assign_by")
+    target_id = data.get("target_id")
+    template_id = data.get("salary_template_id")
+    employee_ids = data.get("employee_ids", [])
+    if assign_by == "location":
+        emps = await db.employees.find({"location_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+    elif assign_by == "department":
+        emps = await db.employees.find({"department_id": target_id, "status": "active"}, {"_id": 0}).to_list(1000)
+        employee_ids = [e["id"] for e in emps]
+    count = 0
+    for emp_id in employee_ids:
+        await db.salary_assignments.update_one(
+            {"employee_id": emp_id},
+            {"$set": {"employee_id": emp_id, "salary_template_id": template_id, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True
+        )
+        count += 1
+    return {"message": f"Salary template assigned to {count} employees"}
+
+@api_router.get("/salary-assignments")
+async def get_all_salary_assignments(current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    return await db.salary_assignments.find({}, {"_id": 0}).to_list(1000)
+
+# Salary Calculator - compute salary from template
+@api_router.post("/salary-compute")
+async def compute_salary(data: dict, current_user: dict = Depends(get_current_user)):
+    """Compute salary breakdown from template + amounts"""
+    components = data.get("components", [])
+    ctc_annual = data.get("ctc_annual", 0)
+    pay_type = data.get("pay_type", "monthly")  # monthly / daily
+
+    total_earnings = sum(c.get("amount", 0) for c in components if c.get("component_type") == "earning")
+    total_deductions = sum(c.get("amount", 0) for c in components if c.get("component_type") == "deduction")
+    total_provisions = sum(c.get("amount", 0) for c in components if c.get("component_type") == "provision")
+
+    gross_monthly = total_earnings
+    net_monthly = gross_monthly - total_deductions
+    ctc_monthly = gross_monthly + total_provisions
+
+    result = {
+        "gross_monthly": round(gross_monthly, 2),
+        "total_deductions_monthly": round(total_deductions, 2),
+        "net_monthly": round(net_monthly, 2),
+        "ctc_monthly": round(ctc_monthly, 2),
+        "gross_annual": round(gross_monthly * 12, 2),
+        "total_deductions_annual": round(total_deductions * 12, 2),
+        "net_annual": round(net_monthly * 12, 2),
+        "ctc_annual": round(ctc_monthly * 12, 2),
+    }
+    if pay_type == "daily":
+        result["gross_daily"] = round(gross_monthly / 30, 2)
+        result["net_daily"] = round(net_monthly / 30, 2)
+    return result
+
+
 # ── Mount ──
 app.include_router(api_router)
 

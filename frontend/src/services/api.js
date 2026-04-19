@@ -189,4 +189,30 @@ export const policyAssignmentAPI = {
   getAll: () => api.get('/policy-assignments'),
 };
 
+export const salaryComponentAPI = {
+  getAll: () => api.get('/salary-components'),
+  create: (data) => api.post('/salary-components', data),
+  update: (id, data) => api.put(`/salary-components/${id}`, data),
+  delete: (id) => api.delete(`/salary-components/${id}`),
+};
+
+export const salaryTemplateAPI = {
+  getAll: () => api.get('/salary-templates'),
+  getById: (id) => api.get(`/salary-templates/${id}`),
+  create: (data) => api.post('/salary-templates', data),
+  update: (id, data) => api.put(`/salary-templates/${id}`, data),
+  delete: (id) => api.delete(`/salary-templates/${id}`),
+};
+
+export const salaryAssignmentAPI = {
+  get: (employeeId) => api.get(`/salary-assignments/${employeeId}`),
+  update: (employeeId, data) => api.put(`/salary-assignments/${employeeId}`, data),
+  bulkAssign: (data) => api.post('/salary-assignments/bulk', data),
+  getAll: () => api.get('/salary-assignments'),
+};
+
+export const salaryComputeAPI = {
+  compute: (data) => api.post('/salary-compute', data),
+};
+
 export default api;
