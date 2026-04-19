@@ -1963,19 +1963,21 @@ def _eval_tds_monthly(annual_taxable_income: float, tds_template: dict = None) -
     # Import lazily to avoid circulars
     from indian_tax import calculate_income_tax
     if tds_template and tds_template.get("slabs"):
-        # Use template slabs if provided
+        # Use template slabs if provided; slabs modeled as (from exclusive, to inclusive, rate%)
         taxable = max(0, annual_taxable_income - float(tds_template.get("standard_deduction", 75000)))
         tax = 0.0
         for s in tds_template["slabs"]:
             low = float(s.get("from", 0) or 0)
             high = s.get("to")
             high = float(high) if high not in (None, "", "inf") else float("inf")
-            rate = float(s.get("rate", 0) or 0) / 100 if float(s.get("rate", 0) or 0) > 1 else float(s.get("rate", 0) or 0)
+            rate = float(s.get("rate", 0) or 0)
+            rate = rate / 100 if rate > 1 else rate
             if taxable <= 0:
                 break
-            slab_width = min(taxable, high - low + 1)
-            tax += slab_width * rate
-            taxable -= slab_width
+            slab_width = high - low
+            slab_amount = min(taxable, slab_width)
+            tax += slab_amount * rate
+            taxable -= slab_amount
         cess = tax * 0.04
         return round((tax + cess) / 12, 2)
     return calculate_income_tax(annual_taxable_income)["monthly_tds"]
@@ -2085,14 +2087,11 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
     for c in components:
         if not _is_enabled(c) or c.get("component_type") not in ("deduction", "provision"):
             continue
-        # Skip statutory ones here; computed below with caps
+        # Skip statutory ones here; computed authoritatively below.
+        # Only skip when the component is explicitly flagged as statutory OR has a valid auto_pair_key.
         ak = (c.get("auto_pair_key") or "").lower()
-        code = (c.get("code") or "").lower()
-        is_stat_user = c.get("is_statutory") or ak in ("pf", "esic", "lwf") or any(
-            k in code for k in ["pf_", "esic_", "lwf_", "_pf", "_esic", "_lwf"]
-        )
+        is_stat_user = bool(c.get("is_statutory")) or ak in ("pf", "esic", "lwf")
         if use_statutory_auto and is_stat_user:
-            # We'll compute these authoritatively below
             continue
         ct = c.get("calc_type", "fixed_amount")
         if ct == "fixed_amount":
