@@ -1,0 +1,64 @@
+{
+  "summary": "Iteration 8 focused on verifying calculation accuracy of enhanced Salary Compute engine (Indian Labour Law 2024-25) and PF auto-pairing fix. Created pytest suite at /app/backend/tests/test_salary_compute.py (19 tests) — ALL 19 PASSED. Frontend smoke test on Salary Structure page confirmed new Statutory Auto-Calculation UI visible inside Create Template dialog with PF/ESIC/PT/LWF/TDS template dropdowns and 'Auto compute PF/ESIC/PT/TDS' toggle.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Create Salary Template dialog",
+        "issues": [
+          "React a11y console warning still present: 'Missing Description or aria-describedby={undefined} for {DialogContent}.' Previous iteration claimed fix via auto aria-describedby on DialogContent (dialog.jsx) but warning persists. Cosmetic / LOW priority."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "POST /api/auth/login (admin) returns access_token",
+    "GET regression endpoints: /salary-components, /salary-templates, /salary-assignments, /compliance-templates/pf, /policy-templates/leave, /attendance",
+    "Auto-pairing: POST /api/salary-components auto_pair_key=pf returns paired_provisions with all 3 expected codes (pf_employer_provision, pf_admin_charges_provision, pf_edli_charges_provision) and auto_created+already_present union matches paired_provisions",
+    "Auto-pairing: auto_pair_key=esic returns esic_employer_provision in paired_provisions",
+    "Compute sample scenario: Basic=20000, HRA=40% of basic, Special=10000, Conv=5% of gross → gross=39900, PF_EMP=1800 (ceiling), PT=200, TDS=0 (87A rebate), net=37900, ctc=41850, provisions PF_ER=1800, PF_ADMIN=75, PF_EDLI=75",
+    "Compute ESIC applicability: gross 18000 → ESIC employee 135.00 (0.75%), ESIC employer 585.00 (3.25%), applicable=true",
+    "Compute PF wage ceiling: Basic 50000 → PF employee = 1800 (min(basic, 15000) * 12%)",
+    "Compute PT slabs (Maharashtra default): gross 5000→0, 9000→175, 15000→200",
+    "Compute TDS 87A rebate boundary: annual taxable exactly 7L (post std deduction) → tds=0",
+    "Compute TDS marginal relief above rebate: monthly TDS capped by (taxable - 7L)/12 * (1+cess)",
+    "Compute totals identity: net = gross - total_deductions; ctc = gross + total_provisions",
+    "Compute response structure: earnings[], deductions[], provisions[], statutory{pf,esic,pt,lwf,tds}, per-component calc_type/percentage/amount present",
+    "Salary components CRUD (create→update→list→delete)",
+    "Salary templates CRUD (create→update→get→delete)",
+    "Frontend: login as admin, navigation to /salary-structure",
+    "Frontend: Components tab shows Earnings/Deductions/Provisions sections with counts",
+    "Frontend: Templates tab accessible; Create Salary Template dialog opens and shows new 'STATUTORY AUTO-CALCULATION' section with Auto compute toggle and 5 template dropdowns (PF/ESIC/PT/LWF/TDS)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_salary_compute.py",
+    "/app/test_reports/pytest/iter8_results.xml"
+  ],
+  "action_items": [
+    "(OPTIONAL, cosmetic) Verify why dialog.jsx auto aria-describedby fix still leaves the 'Missing Description or aria-describedby' React warning in console — may require actually rendering a DialogDescription element or setting aria-describedby to a stable id unconditionally."
+  ],
+  "critical_code_review_comments": [
+    "server.py now exceeds 2250 lines — recommend splitting Salary/Compute logic into backend/modules/salary.py for maintainability (>700 line guideline).",
+    "/app/backend/indian_tax.py calculate_pf() does NOT apply the 15,000 ceiling; the cap is only enforced inside server.py compute_salary. Safe today because nothing else imports calculate_pf, but leaves a sharp edge if reused. Consider applying ceiling inside indian_tax.calculate_pf or documenting that it returns uncapped values.",
+    "_eval_tds_monthly template-slab path uses `slab_width = min(taxable, high - low + 1)` — the '+1' is subtly incorrect for continuous income slabs (creates 1 rupee over-count per slab). Default (non-template) path via indian_tax.calculate_income_tax is correct. Low-impact but worth fixing if users supply custom TDS templates.",
+    "compute_salary treats any user component with auto_pair_key in {pf,esic,lwf} OR whose code contains pf_/esic_/lwf_ as statutory and silently drops it when use_statutory_auto=true. Code substring match is broad (e.g., a component named 'SPF_BONUS' would be dropped). Consider matching on exact auto_pair_key / is_statutory flag only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_salary_compute.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 pytest)",
+    "frontend": "100% smoke (page loads, new UI visible, no blocking errors)"
+  },
+  "test_credentials": "admin@hrms.com / admin123 (login_as=admin)",
+  "seed_data_creation": "Tests create TEST_-prefixed components and templates and delete them in-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend Salary Compute engine is mathematically verified against the expected sample (Basic=20k → gross=39900, PF=1800, PT=200, TDS=0, net=37900, CTC=41850) and all Indian statutory edge cases (ESIC threshold, PF ceiling, PT slabs, 87A rebate, marginal relief). Auto-pairing returns full paired_provisions list. Re-use /app/backend/tests/test_salary_compute.py as regression. The only open item is a minor React a11y console warning for DialogContent missing aria-describedby — previous iteration claimed a fix but warning persists; cosmetic / non-blocking.",
+  "rca of the issue": "Not applicable — all requested features are verified working. The only residual issue is a React dev warning about missing aria-describedby on DialogContent; likely the dialog.jsx fix attaches an aria-describedby pointing to a non-rendered description id, so React still flags it. Fix would be to render a visually-hidden DialogDescription OR omit aria-describedby when no description exists."
+}

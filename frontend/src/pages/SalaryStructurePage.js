@@ -28,6 +28,7 @@ export default function SalaryStructurePage() {
   var [employees, setEmployees] = useState([]);
   var [locations, setLocations] = useState([]);
   var [departments, setDepartments] = useState([]);
+  var [complianceTpls, setComplianceTpls] = useState({ pf: [], esic: [], pt: [], lwf: [], tds: [] });
   var [loading, setLoading] = useState(true);
   // Component form
   var [compDialog, setCompDialog] = useState(false);
@@ -52,6 +53,9 @@ export default function SalaryStructurePage() {
       setEmployees(r[2].data || []);
       setLocations(r[3].data || []);
       setDepartments(r[4].data || []);
+      // Fetch statutory templates (for optional auto-calc linking)
+      var st = await Promise.all(['pf','esic','pt','lwf','tds'].map(function(t) { return complianceTemplateAPI.getAll(t).catch(function() { return { data: [] }; }); }));
+      setComplianceTpls({ pf: st[0].data || [], esic: st[1].data || [], pt: st[2].data || [], lwf: st[3].data || [], tds: st[4].data || [] });
     } catch (e) { /* ok */ }
     setLoading(false);
   }
@@ -90,8 +94,21 @@ export default function SalaryStructurePage() {
   function toggleTmplComp(idx) { var c = [...tmplForm.components]; c[idx] = {...c[idx], enabled: !c[idx].enabled}; setTmplForm({...tmplForm, components: c}); }
   function setTmplCompField(idx, key, val) { var c = [...tmplForm.components]; c[idx] = {...c[idx], [key]: val}; setTmplForm({...tmplForm, components: c}); }
   async function computeSalary() {
-    var active = tmplForm.components.filter(function(c) { return c.enabled; }).map(function(c) { return {...c, amount: c.calc_type === 'fixed_amount' ? (c.amount || 0) : 0 }; });
-    try { var r = await salaryComputeAPI.compute({ components: active, pay_type: tmplForm.pay_type }); setComputeResult(r.data); } catch (e) { toast.error('Compute failed'); }
+    var active = (tmplForm.components || []).filter(function(c) { return c.enabled; });
+    try {
+      var r = await salaryComputeAPI.compute({
+        components: active,
+        pay_type: tmplForm.pay_type,
+        ctc_annual: tmplForm.ctc_annual || 0,
+        use_statutory_auto: tmplForm.use_statutory_auto !== false,
+        pf_template_id: tmplForm.pf_template_id || null,
+        esic_template_id: tmplForm.esic_template_id || null,
+        pt_template_id: tmplForm.pt_template_id || null,
+        lwf_template_id: tmplForm.lwf_template_id || null,
+        tds_template_id: tmplForm.tds_template_id || null,
+      });
+      setComputeResult(r.data);
+    } catch (e) { toast.error('Compute failed'); }
   }
   async function saveTmpl(e) {
     e.preventDefault();
@@ -252,7 +269,35 @@ export default function SalaryStructurePage() {
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div><Label className="text-xs">Template Name *</Label><Input value={tmplForm.template_name || ''} onChange={function(e) { setTmplForm({...tmplForm, template_name: e.target.value}); }} required /></div>
               <div><Label className="text-xs">Pay Type</Label><Select value={tmplForm.pay_type || 'monthly'} onValueChange={function(v) { setTmplForm({...tmplForm, pay_type: v}); }}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="daily">Daily Wage</SelectItem></SelectContent></Select></div>
-              <div className="flex items-end"><Button type="button" onClick={computeSalary} variant="outline" className="w-full h-9 text-xs"><CurrencyDollar size={14} className="mr-1" /> Compute</Button></div>
+              <div className="flex items-end"><Button type="button" onClick={computeSalary} variant="outline" className="w-full h-9 text-xs" data-testid="compute-salary-btn"><CurrencyDollar size={14} className="mr-1" /> Compute</Button></div>
+            </div>
+
+            {/* Statutory linking — for accurate PF/ESIC/PT/LWF/TDS calc */}
+            <div className="border border-[#E8E2D9] rounded-xl p-3 mb-3 bg-[#F9F6F0]">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-[#2A2624] uppercase">Statutory Auto-Calculation</p>
+                <div className="flex items-center gap-2"><Label className="text-xs">Auto compute PF/ESIC/PT/TDS</Label><Switch checked={tmplForm.use_statutory_auto !== false} onCheckedChange={function(v) { setTmplForm({...tmplForm, use_statutory_auto: v}); }} data-testid="use-statutory-auto" /></div>
+              </div>
+              {tmplForm.use_statutory_auto !== false && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  {[
+                    { key: 'pf_template_id', type: 'pf', label: 'PF' },
+                    { key: 'esic_template_id', type: 'esic', label: 'ESIC' },
+                    { key: 'pt_template_id', type: 'pt', label: 'PT' },
+                    { key: 'lwf_template_id', type: 'lwf', label: 'LWF' },
+                    { key: 'tds_template_id', type: 'tds', label: 'TDS' },
+                  ].map(function(s) { var list = complianceTpls[s.type] || []; return (
+                    <div key={s.key}>
+                      <Label className="text-[10px]">{s.label} Template</Label>
+                      <Select value={tmplForm[s.key] || ''} onValueChange={function(v) { setTmplForm({...tmplForm, [s.key]: v === 'default' ? '' : v}); }}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Use default" /></SelectTrigger>
+                        <SelectContent><SelectItem value="default">Use default rules</SelectItem>{list.map(function(t) { return <SelectItem key={t.id} value={t.id}>{t.name || t.template_name || 'Unnamed'}</SelectItem>; })}</SelectContent>
+                      </Select>
+                    </div>
+                  ); })}
+                </div>
+              )}
+              <p className="text-[10px] text-[#A28B7A] mt-2">When on: PF caps at ₹15,000 basic, ESIC applies only if gross ≤ ₹21,000, PT uses state slabs, TDS uses New Regime 2024-25. Link compliance templates to use employee-specific slabs.</p>
             </div>
 
             {/* Component list */}
@@ -293,12 +338,58 @@ export default function SalaryStructurePage() {
 
             {/* Compute Result */}
             {computeResult && (
-              <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-[#7D9D85]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Gross</p><p className="text-lg font-bold text-[#7D9D85]">{fmt(computeResult.gross_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.gross_annual)}</p></div>
-                <div className="bg-[#D96C5B]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Deductions</p><p className="text-lg font-bold text-[#D96C5B]">{fmt(computeResult.total_deductions_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.total_deductions_annual)}</p></div>
-                <div className="bg-[#2A2624]/5 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Net / Take-Home</p><p className="text-lg font-bold text-[#2A2624]">{fmt(computeResult.net_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.net_annual)}</p></div>
-                <div className="bg-[#E8B25C]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">CTC</p><p className="text-lg font-bold text-[#E8B25C]">{fmt(computeResult.ctc_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.ctc_annual)}</p></div>
-                {computeResult.gross_daily && <div className="bg-[#4A5D4E]/10 rounded-xl p-3 text-center col-span-2"><p className="text-xs text-[#6A625E]">Daily Wage</p><p className="text-lg font-bold text-[#4A5D4E]">Gross: {fmt(computeResult.gross_daily)} | Net: {fmt(computeResult.net_daily)}</p></div>}
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-[#7D9D85]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Gross</p><p className="text-lg font-bold text-[#7D9D85]">{fmt(computeResult.gross_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.gross_annual)}</p></div>
+                  <div className="bg-[#D96C5B]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Deductions</p><p className="text-lg font-bold text-[#D96C5B]">{fmt(computeResult.total_deductions_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.total_deductions_annual)}</p></div>
+                  <div className="bg-[#2A2624]/5 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">Net / Take-Home</p><p className="text-lg font-bold text-[#2A2624]">{fmt(computeResult.net_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.net_annual)}</p></div>
+                  <div className="bg-[#E8B25C]/10 rounded-xl p-3 text-center"><p className="text-xs text-[#6A625E]">CTC</p><p className="text-lg font-bold text-[#E8B25C]">{fmt(computeResult.ctc_monthly)}</p><p className="text-[10px] text-[#A28B7A]">Annual: {fmt(computeResult.ctc_annual)}</p></div>
+                  {computeResult.gross_daily && <div className="bg-[#4A5D4E]/10 rounded-xl p-3 text-center col-span-2"><p className="text-xs text-[#6A625E]">Daily Wage</p><p className="text-lg font-bold text-[#4A5D4E]">Gross: {fmt(computeResult.gross_daily)} | Net: {fmt(computeResult.net_daily)}</p></div>}
+                </div>
+
+                {/* Per-component breakdown */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-white border border-[#E8E2D9] rounded-xl p-3">
+                    <p className="text-xs font-bold text-[#7D9D85] uppercase mb-2">Earnings Breakdown</p>
+                    {(computeResult.earnings || []).map(function(e, i) { return (
+                      <div key={i} className="flex justify-between text-xs py-1 border-b border-[#E8E2D9]/50 last:border-0">
+                        <span className="text-[#6A625E] truncate mr-2" title={e.name}>{e.name}{e.calc_type !== 'fixed_amount' && e.percentage ? ' (' + e.percentage + '%)' : ''}</span>
+                        <span className="font-medium text-[#2A2624]">{fmt(e.amount)}</span>
+                      </div>
+                    ); })}
+                  </div>
+                  <div className="bg-white border border-[#E8E2D9] rounded-xl p-3">
+                    <p className="text-xs font-bold text-[#D96C5B] uppercase mb-2">Deductions Breakdown</p>
+                    {(computeResult.deductions || []).map(function(d, i) { return (
+                      <div key={i} className="flex justify-between text-xs py-1 border-b border-[#E8E2D9]/50 last:border-0">
+                        <span className="text-[#6A625E] truncate mr-2" title={d.name}>{d.name}{d.is_statutory_computed && <span className="ml-1 text-[9px] text-[#7D9D85]">(auto)</span>}</span>
+                        <span className="font-medium text-[#2A2624]">{fmt(d.amount)}</span>
+                      </div>
+                    ); })}
+                  </div>
+                  <div className="bg-white border border-[#E8E2D9] rounded-xl p-3">
+                    <p className="text-xs font-bold text-[#E8B25C] uppercase mb-2">Provisions Breakdown</p>
+                    {(computeResult.provisions || []).map(function(p, i) { return (
+                      <div key={i} className="flex justify-between text-xs py-1 border-b border-[#E8E2D9]/50 last:border-0">
+                        <span className="text-[#6A625E] truncate mr-2" title={p.name}>{p.name}{p.is_statutory_computed && <span className="ml-1 text-[9px] text-[#7D9D85]">(auto)</span>}</span>
+                        <span className="font-medium text-[#2A2624]">{fmt(p.amount)}</span>
+                      </div>
+                    ); })}
+                  </div>
+                </div>
+
+                {/* Statutory summary */}
+                {computeResult.statutory && (
+                  <div className="bg-[#F9F6F0] border border-[#E8E2D9] rounded-xl p-3">
+                    <p className="text-xs font-bold text-[#2A2624] uppercase mb-2">Statutory Summary (per Indian Labour Law)</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      {computeResult.statutory.pf && <div><p className="text-[#A28B7A]">PF Wages</p><p className="font-semibold">{fmt(computeResult.statutory.pf.base_used)} <span className="text-[9px] text-[#A28B7A]">(cap ₹15,000)</span></p><p className="text-[10px] text-[#D96C5B]">Emp: {fmt(computeResult.statutory.pf.employee)} | Er: {fmt(computeResult.statutory.pf.employer)}</p></div>}
+                      {computeResult.statutory.esic && <div><p className="text-[#A28B7A]">ESIC</p><p className="font-semibold">{computeResult.statutory.esic.applicable ? 'Applicable' : 'N/A (>₹21K)'}</p>{computeResult.statutory.esic.applicable && <p className="text-[10px] text-[#D96C5B]">Emp: {fmt(computeResult.statutory.esic.employee)} | Er: {fmt(computeResult.statutory.esic.employer)}</p>}</div>}
+                      {computeResult.statutory.pt && <div><p className="text-[#A28B7A]">Professional Tax</p><p className="font-semibold">{fmt(computeResult.statutory.pt.amount)}</p><p className="text-[10px] text-[#A28B7A]">monthly slab</p></div>}
+                      {computeResult.statutory.tds && <div><p className="text-[#A28B7A]">TDS (Monthly)</p><p className="font-semibold">{fmt(computeResult.statutory.tds.monthly_tds)}</p><p className="text-[10px] text-[#A28B7A]">On ₹{Number(computeResult.statutory.tds.annual_taxable).toLocaleString('en-IN')} annual</p></div>}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

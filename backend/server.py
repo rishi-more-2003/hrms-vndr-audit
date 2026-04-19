@@ -1778,6 +1778,15 @@ AUTO_PAIRS = {
 async def get_salary_components(current_user: dict = Depends(get_current_user)):
     return await db.salary_components.find({}, {"_id": 0}).to_list(1000)
 
+# Default percentages for auto-paired statutory provisions
+AUTO_PAIR_DEFAULTS = {
+    "pf_employer_provision": {"label": "PF Employer Contribution", "percentage": 12.0, "calc_type": "percentage_of_basic", "description": "3.67% EPF + 8.33% EPS capped at basic ₹15,000"},
+    "pf_admin_charges_provision": {"label": "PF Admin Charges", "percentage": 0.5, "calc_type": "percentage_of_basic", "description": "Employer admin charges on EPF"},
+    "pf_edli_charges_provision": {"label": "EDLI Charges", "percentage": 0.5, "calc_type": "percentage_of_basic", "description": "Employee Deposit Linked Insurance, capped at basic ₹15,000"},
+    "esic_employer_provision": {"label": "ESIC Employer Contribution", "percentage": 3.25, "calc_type": "percentage_of_gross", "description": "Only applicable when gross ≤ ₹21,000"},
+    "lwf_employer_provision": {"label": "LWF Employer Contribution", "percentage": 0.0, "calc_type": "fixed_amount", "description": "State-specific fixed amount"},
+}
+
 @api_router.post("/salary-components")
 async def create_salary_component(data: dict, current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
@@ -1789,24 +1798,34 @@ async def create_salary_component(data: dict, current_user: dict = Depends(get_c
     pair_key = data.get("auto_pair_key")
     if pair_key and pair_key in AUTO_PAIRS:
         auto_created = []
+        already_present = []
         for prov_code in AUTO_PAIRS[pair_key]:
             existing = await db.salary_components.find_one({"code": prov_code}, {"_id": 0})
             if not existing:
+                defaults = AUTO_PAIR_DEFAULTS.get(prov_code, {})
                 prov = {
                     "id": str(uuid.uuid4()), "code": prov_code,
-                    "name": prov_code.replace("_", " ").title(),
+                    "name": defaults.get("label", prov_code.replace("_", " ").title()),
                     "component_type": "provision", "category": "statutory",
                     "is_statutory": True, "paired_with": data["id"],
-                    "calc_type": "percentage", "default_value": 0,
+                    "calc_type": defaults.get("calc_type", "percentage_of_basic"),
+                    "default_value": 0,
+                    "default_percentage": defaults.get("percentage", 0),
                     "is_fixed": True, "allow_direct_entry": False,
                     "attracts_pf": False, "attracts_esic": False, "attracts_pt": False,
                     "attracts_lwf": False, "attracts_ot": False, "attracts_tds": False,
                     "classification": "others",
+                    "description": defaults.get("description", ""),
                     "created_at": datetime.now(timezone.utc).isoformat()
                 }
                 await db.salary_components.insert_one(prov)
                 auto_created.append(prov_code)
+            else:
+                already_present.append(prov_code)
+        # Always report the full pairing outcome, whether newly created or already existing
         result["auto_created_provisions"] = auto_created
+        result["paired_provisions"] = auto_created + already_present
+        result["already_present_provisions"] = already_present
     return result
 
 @api_router.put("/salary-components/{comp_id}")
@@ -1898,31 +1917,313 @@ async def get_all_salary_assignments(current_user: dict = Depends(get_current_us
     require_admin(current_user)
     return await db.salary_assignments.find({}, {"_id": 0}).to_list(1000)
 
-# Salary Calculator - compute salary from template
+# ── Indian Payroll Constants (statutory caps) ──
+PF_WAGE_CEILING = 15000      # EPFO: PF computed on min(basic+da, 15000)
+ESIC_WAGE_CEILING = 21000    # ESIC: applicable only when gross ≤ 21000
+PF_EPS_CAP = 1250            # 8.33% of 15000 capped at 1250 for EPS
+PF_ADMIN_RATE = 0.005        # 0.5% admin charges
+PF_EDLI_RATE = 0.005         # 0.5% EDLI charges (capped at 15000)
+PF_EMPLOYEE_RATE = 0.12      # 12%
+PF_EMPLOYER_RATE = 0.12      # 12% (3.67% EPF + 8.33% EPS)
+ESIC_EMPLOYEE_RATE = 0.0075  # 0.75%
+ESIC_EMPLOYER_RATE = 0.0325  # 3.25%
+
+
+def _eval_pt_from_template(pt_template: dict, gross_monthly: float) -> float:
+    """Evaluate Professional Tax from a compliance template's slabs. Fallback to defaults."""
+    if not pt_template:
+        # Maharashtra default (INR/month based on gross)
+        if gross_monthly <= 7500:
+            return 0
+        if gross_monthly <= 10000:
+            return 175
+        return 200
+    slabs = pt_template.get("slabs") or []
+    for s in slabs:
+        low = float(s.get("from", 0) or 0)
+        high = s.get("to")
+        high = float(high) if high not in (None, "", "inf") else float("inf")
+        if low <= gross_monthly <= high:
+            return float(s.get("amount", 0) or 0)
+    return 0
+
+
+def _eval_lwf_from_template(lwf_template: dict) -> dict:
+    """Return {employee, employer} LWF from template."""
+    if not lwf_template:
+        return {"employee": 0, "employer": 0}
+    return {
+        "employee": float(lwf_template.get("employee_amount", 0) or 0),
+        "employer": float(lwf_template.get("employer_amount", 0) or 0),
+    }
+
+
+def _eval_tds_monthly(annual_taxable_income: float, tds_template: dict = None) -> float:
+    """Evaluate monthly TDS from annual taxable income using New Regime (or template slabs)."""
+    # Import lazily to avoid circulars
+    from indian_tax import calculate_income_tax
+    if tds_template and tds_template.get("slabs"):
+        # Use template slabs if provided
+        taxable = max(0, annual_taxable_income - float(tds_template.get("standard_deduction", 75000)))
+        tax = 0.0
+        for s in tds_template["slabs"]:
+            low = float(s.get("from", 0) or 0)
+            high = s.get("to")
+            high = float(high) if high not in (None, "", "inf") else float("inf")
+            rate = float(s.get("rate", 0) or 0) / 100 if float(s.get("rate", 0) or 0) > 1 else float(s.get("rate", 0) or 0)
+            if taxable <= 0:
+                break
+            slab_width = min(taxable, high - low + 1)
+            tax += slab_width * rate
+            taxable -= slab_width
+        cess = tax * 0.04
+        return round((tax + cess) / 12, 2)
+    return calculate_income_tax(annual_taxable_income)["monthly_tds"]
+
+
+# Salary Calculator - compute salary from template (Indian Labour Law compliant)
 @api_router.post("/salary-compute")
 async def compute_salary(data: dict, current_user: dict = Depends(get_current_user)):
-    """Compute salary breakdown from template + amounts"""
+    """
+    Compute salary breakdown. Returns per-component computed amounts + totals.
+    Supports:
+      - fixed_amount, percentage_of_basic, percentage_of_gross, percentage_of_ctc
+      - Statutory overrides via compliance template IDs (PF/ESIC/PT/LWF/TDS)
+      - PF wage ceiling (₹15,000), ESIC threshold (₹21,000)
+      - New Regime TDS slabs (2024-25) with rebate u/s 87A
+    """
     components = data.get("components", [])
-    ctc_annual = data.get("ctc_annual", 0)
-    pay_type = data.get("pay_type", "monthly")  # monthly / daily
+    pay_type = data.get("pay_type", "monthly")
+    ctc_annual_override = float(data.get("ctc_annual") or 0)
+    use_statutory_auto = bool(data.get("use_statutory_auto", True))
 
-    total_earnings = sum(c.get("amount", 0) for c in components if c.get("component_type") == "earning")
-    total_deductions = sum(c.get("amount", 0) for c in components if c.get("component_type") == "deduction")
-    total_provisions = sum(c.get("amount", 0) for c in components if c.get("component_type") == "provision")
+    # Fetch assigned compliance templates if passed (for accurate slab-based calc)
+    async def _get_tpl(col_key: str, tid: str):
+        if not tid:
+            return None
+        col = TEMPLATE_COLLECTIONS.get(col_key)
+        if not col:
+            return None
+        return await db[col].find_one({"id": tid}, {"_id": 0})
 
-    gross_monthly = total_earnings
-    net_monthly = gross_monthly - total_deductions
-    ctc_monthly = gross_monthly + total_provisions
+    pf_tpl   = await _get_tpl("pf", data.get("pf_template_id"))
+    esic_tpl = await _get_tpl("esic", data.get("esic_template_id"))
+    pt_tpl   = await _get_tpl("pt", data.get("pt_template_id"))
+    lwf_tpl  = await _get_tpl("lwf", data.get("lwf_template_id"))
+    tds_tpl  = await _get_tpl("tds", data.get("tds_template_id"))
+
+    # ── Phase 1: Identify basic and compute deterministic earnings ──
+    def _is_enabled(c):
+        return c.get("enabled") is not False
+
+    def _find_basic(comps):
+        for c in comps:
+            if not _is_enabled(c) or c.get("component_type") != "earning":
+                continue
+            code = (c.get("code") or "").upper()
+            name = (c.get("name") or "").lower()
+            if code == "BASIC" or code.startswith("BASIC_") or (code == "" and "basic" in name):
+                return c
+        return None
+
+    basic_comp = _find_basic(components)
+    basic_amount = 0.0
+    if basic_comp:
+        if basic_comp.get("calc_type") == "fixed_amount":
+            basic_amount = float(basic_comp.get("amount") or 0)
+        elif basic_comp.get("calc_type") == "percentage_of_ctc" and ctc_annual_override > 0:
+            basic_amount = round((ctc_annual_override / 12) * float(basic_comp.get("percentage") or 0) / 100, 2)
+
+    # ── Phase 2: Compute earnings ──
+    # Pass 1: fixed + % of basic (derive deterministic subtotal)
+    earnings_breakdown = []
+    for c in components:
+        if not _is_enabled(c) or c.get("component_type") != "earning":
+            continue
+        ct = c.get("calc_type", "fixed_amount")
+        if ct == "fixed_amount":
+            amt = float(c.get("amount") or 0)
+        elif ct == "percentage_of_basic":
+            amt = round(basic_amount * float(c.get("percentage") or 0) / 100, 2)
+        elif ct == "percentage_of_ctc" and ctc_annual_override > 0:
+            amt = round((ctc_annual_override / 12) * float(c.get("percentage") or 0) / 100, 2)
+        else:
+            amt = None  # to be filled in pass 2
+        earnings_breakdown.append({
+            "component_id": c.get("component_id") or c.get("id"),
+            "code": c.get("code"), "name": c.get("name"),
+            "calc_type": ct, "percentage": float(c.get("percentage") or 0),
+            "classification": c.get("classification", "inclusion_wages"),
+            "attracts_pf": bool(c.get("attracts_pf")),
+            "attracts_esic": bool(c.get("attracts_esic")),
+            "attracts_pt": bool(c.get("attracts_pt")),
+            "attracts_tds": bool(c.get("attracts_tds")),
+            "is_statutory_computed": False,
+            "amount": amt,
+        })
+
+    subtotal_before_gross_pct = sum(e["amount"] for e in earnings_breakdown if e["amount"] is not None)
+    # Pass 2: % of gross (only earnings)
+    for e in earnings_breakdown:
+        if e["amount"] is None and e["calc_type"] == "percentage_of_gross":
+            e["amount"] = round(subtotal_before_gross_pct * e["percentage"] / 100, 2)
+    for e in earnings_breakdown:
+        if e["amount"] is None:
+            e["amount"] = 0.0
+
+    gross_monthly = round(sum(e["amount"] for e in earnings_breakdown), 2)
+    pf_wages = round(sum(e["amount"] for e in earnings_breakdown if e["attracts_pf"]), 2)
+    # PF wages are typically basic (+DA if basic itself is zero). Fallback to basic_amount.
+    if pf_wages == 0 and basic_amount > 0:
+        pf_wages = basic_amount
+
+    # ── Phase 3: Compute deductions & provisions ──
+    deductions_breakdown = []
+    provisions_breakdown = []
+
+    # User-provided deductions (fixed or %-based)
+    for c in components:
+        if not _is_enabled(c) or c.get("component_type") not in ("deduction", "provision"):
+            continue
+        # Skip statutory ones here; computed below with caps
+        ak = (c.get("auto_pair_key") or "").lower()
+        code = (c.get("code") or "").lower()
+        is_stat_user = c.get("is_statutory") or ak in ("pf", "esic", "lwf") or any(
+            k in code for k in ["pf_", "esic_", "lwf_", "_pf", "_esic", "_lwf"]
+        )
+        if use_statutory_auto and is_stat_user:
+            # We'll compute these authoritatively below
+            continue
+        ct = c.get("calc_type", "fixed_amount")
+        if ct == "fixed_amount":
+            amt = float(c.get("amount") or 0)
+        elif ct == "percentage_of_basic":
+            amt = round(basic_amount * float(c.get("percentage") or 0) / 100, 2)
+        elif ct == "percentage_of_gross":
+            amt = round(gross_monthly * float(c.get("percentage") or 0) / 100, 2)
+        elif ct == "percentage_of_ctc" and ctc_annual_override > 0:
+            amt = round((ctc_annual_override / 12) * float(c.get("percentage") or 0) / 100, 2)
+        else:
+            amt = 0.0
+        entry = {
+            "component_id": c.get("component_id") or c.get("id"),
+            "code": c.get("code"), "name": c.get("name"),
+            "calc_type": ct, "percentage": float(c.get("percentage") or 0),
+            "is_statutory_computed": False,
+            "amount": amt,
+        }
+        if c.get("component_type") == "deduction":
+            deductions_breakdown.append(entry)
+        else:
+            provisions_breakdown.append(entry)
+
+    # ── Phase 3b: Statutory authoritative computation (if enabled) ──
+    statutory = {}
+    if use_statutory_auto:
+        # PF: employee 12% of min(pf_wages, 15000)
+        pf_base = min(pf_wages, PF_WAGE_CEILING)
+        pf_emp_rate = float((pf_tpl or {}).get("employee_rate", PF_EMPLOYEE_RATE * 100)) / 100
+        pf_er_rate  = float((pf_tpl or {}).get("employer_rate", PF_EMPLOYER_RATE * 100)) / 100
+        pf_admin    = float((pf_tpl or {}).get("admin_rate", PF_ADMIN_RATE * 100)) / 100
+        pf_edli     = float((pf_tpl or {}).get("edli_rate", PF_EDLI_RATE * 100)) / 100
+        pf_cap_applies = (pf_tpl or {}).get("apply_wage_ceiling", True)
+        base_for_pf = pf_base if pf_cap_applies else pf_wages
+
+        pf_employee  = round(base_for_pf * pf_emp_rate, 2) if pf_wages > 0 else 0
+        pf_employer  = round(base_for_pf * pf_er_rate, 2) if pf_wages > 0 else 0
+        pf_admin_amt = round(base_for_pf * pf_admin, 2) if pf_wages > 0 else 0
+        pf_edli_amt  = round(base_for_pf * pf_edli, 2) if pf_wages > 0 else 0
+
+        if pf_employee > 0:
+            deductions_breakdown.append({"code": "PF_EMP", "name": "Provident Fund (Employee)",
+                                         "calc_type": "percentage_of_basic", "percentage": pf_emp_rate * 100,
+                                         "is_statutory_computed": True, "amount": pf_employee})
+            provisions_breakdown.append({"code": "PF_ER", "name": "PF Employer Contribution",
+                                         "calc_type": "percentage_of_basic", "percentage": pf_er_rate * 100,
+                                         "is_statutory_computed": True, "amount": pf_employer})
+            provisions_breakdown.append({"code": "PF_ADMIN", "name": "PF Admin Charges",
+                                         "calc_type": "percentage_of_basic", "percentage": pf_admin * 100,
+                                         "is_statutory_computed": True, "amount": pf_admin_amt})
+            provisions_breakdown.append({"code": "PF_EDLI", "name": "EDLI Charges",
+                                         "calc_type": "percentage_of_basic", "percentage": pf_edli * 100,
+                                         "is_statutory_computed": True, "amount": pf_edli_amt})
+
+        statutory["pf"] = {"wages": pf_wages, "base_used": base_for_pf, "employee": pf_employee,
+                          "employer": pf_employer, "admin": pf_admin_amt, "edli": pf_edli_amt,
+                          "eps_capped_at": PF_EPS_CAP}
+
+        # ESIC: only if gross ≤ 21000 (or template threshold)
+        esic_threshold = float((esic_tpl or {}).get("threshold_gross", ESIC_WAGE_CEILING))
+        esic_emp_rate = float((esic_tpl or {}).get("employee_rate", ESIC_EMPLOYEE_RATE * 100)) / 100
+        esic_er_rate  = float((esic_tpl or {}).get("employer_rate", ESIC_EMPLOYER_RATE * 100)) / 100
+        esic_applicable = gross_monthly <= esic_threshold and gross_monthly > 0
+        esic_employee = round(gross_monthly * esic_emp_rate, 2) if esic_applicable else 0
+        esic_employer = round(gross_monthly * esic_er_rate, 2) if esic_applicable else 0
+        if esic_applicable:
+            deductions_breakdown.append({"code": "ESIC_EMP", "name": "ESIC (Employee)",
+                                         "calc_type": "percentage_of_gross", "percentage": esic_emp_rate * 100,
+                                         "is_statutory_computed": True, "amount": esic_employee})
+            provisions_breakdown.append({"code": "ESIC_ER", "name": "ESIC Employer Contribution",
+                                         "calc_type": "percentage_of_gross", "percentage": esic_er_rate * 100,
+                                         "is_statutory_computed": True, "amount": esic_employer})
+        statutory["esic"] = {"applicable": esic_applicable, "threshold": esic_threshold,
+                             "employee": esic_employee, "employer": esic_employer}
+
+        # Professional Tax (slab-based per state)
+        pt_amount = _eval_pt_from_template(pt_tpl, gross_monthly)
+        if pt_amount > 0:
+            deductions_breakdown.append({"code": "PT", "name": "Professional Tax",
+                                         "calc_type": "slab", "percentage": 0,
+                                         "is_statutory_computed": True, "amount": pt_amount})
+        statutory["pt"] = {"amount": pt_amount}
+
+        # LWF (state-specific, usually fixed)
+        lwf = _eval_lwf_from_template(lwf_tpl)
+        if lwf["employee"] > 0:
+            deductions_breakdown.append({"code": "LWF_EMP", "name": "Labour Welfare Fund (Employee)",
+                                         "calc_type": "fixed_amount", "percentage": 0,
+                                         "is_statutory_computed": True, "amount": lwf["employee"]})
+        if lwf["employer"] > 0:
+            provisions_breakdown.append({"code": "LWF_ER", "name": "LWF Employer Contribution",
+                                         "calc_type": "fixed_amount", "percentage": 0,
+                                         "is_statutory_computed": True, "amount": lwf["employer"]})
+        statutory["lwf"] = lwf
+
+        # TDS (monthly from annual projection)
+        # Annual taxable = sum of earnings that attract TDS * 12 (or gross * 12 if none tagged)
+        tds_earnings_monthly = sum(e["amount"] for e in earnings_breakdown if e["attracts_tds"])
+        if tds_earnings_monthly == 0:
+            tds_earnings_monthly = gross_monthly
+        annual_taxable = tds_earnings_monthly * 12
+        tds_monthly = _eval_tds_monthly(annual_taxable, tds_tpl)
+        if tds_monthly > 0:
+            deductions_breakdown.append({"code": "TDS", "name": "Income Tax (TDS)",
+                                         "calc_type": "slab_annual", "percentage": 0,
+                                         "is_statutory_computed": True, "amount": tds_monthly})
+        statutory["tds"] = {"annual_taxable": round(annual_taxable, 2), "monthly_tds": tds_monthly}
+
+    # ── Phase 4: Totals ──
+    total_deductions = round(sum(d["amount"] for d in deductions_breakdown), 2)
+    total_provisions = round(sum(p["amount"] for p in provisions_breakdown), 2)
+    net_monthly = round(gross_monthly - total_deductions, 2)
+    ctc_monthly = round(gross_monthly + total_provisions, 2)
 
     result = {
-        "gross_monthly": round(gross_monthly, 2),
-        "total_deductions_monthly": round(total_deductions, 2),
-        "net_monthly": round(net_monthly, 2),
-        "ctc_monthly": round(ctc_monthly, 2),
+        "earnings": earnings_breakdown,
+        "deductions": deductions_breakdown,
+        "provisions": provisions_breakdown,
+        "basic_monthly": round(basic_amount, 2),
+        "pf_wages_monthly": round(pf_wages, 2),
+        "gross_monthly": gross_monthly,
+        "total_deductions_monthly": total_deductions,
+        "total_provisions_monthly": total_provisions,
+        "net_monthly": net_monthly,
+        "ctc_monthly": ctc_monthly,
         "gross_annual": round(gross_monthly * 12, 2),
         "total_deductions_annual": round(total_deductions * 12, 2),
         "net_annual": round(net_monthly * 12, 2),
         "ctc_annual": round(ctc_monthly * 12, 2),
+        "statutory": statutory,
     }
     if pay_type == "daily":
         result["gross_daily"] = round(gross_monthly / 30, 2)

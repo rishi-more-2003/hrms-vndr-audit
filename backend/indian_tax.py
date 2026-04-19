@@ -17,14 +17,15 @@ PROFESSIONAL_TAX_SLABS = [
     (10001, float('inf'), 200),  # Above 10000 = 200/month (max)
 ]
 
-# New Tax Regime Slabs 2024-25 (Annual)
+# New Tax Regime Slabs 2024-25 (Annual) - (lower_bound_exclusive, upper_bound_inclusive, rate)
+# i.e. tax applies on income > lower_bound up to upper_bound
 INCOME_TAX_SLABS = [
     (0, 300000, 0),          # Up to 3L = 0%
-    (300001, 700000, 0.05),  # 3L-7L = 5%
-    (700001, 1000000, 0.10), # 7L-10L = 10%
-    (1000001, 1200000, 0.15),# 10L-12L = 15%
-    (1200001, 1500000, 0.20),# 12L-15L = 20%
-    (1500001, float('inf'), 0.30), # Above 15L = 30%
+    (300000, 700000, 0.05),  # >3L to 7L = 5%
+    (700000, 1000000, 0.10), # >7L to 10L = 10%
+    (1000000, 1200000, 0.15),# >10L to 12L = 15%
+    (1200000, 1500000, 0.20),# >12L to 15L = 20%
+    (1500000, float('inf'), 0.30), # >15L = 30%
 ]
 
 CESS_RATE = 0.04  # 4% health & education cess
@@ -65,18 +66,25 @@ def calculate_professional_tax(gross_salary_monthly):
 
 
 def calculate_income_tax(annual_taxable_income):
-    """Calculate annual income tax under New Tax Regime"""
+    """Calculate annual income tax under New Tax Regime (2024-25) with Sec 87A rebate + marginal relief"""
     taxable = max(0, annual_taxable_income - STANDARD_DEDUCTION)
+    gross_taxable = taxable
     tax = 0
     for low, high, rate in INCOME_TAX_SLABS:
         if taxable <= 0:
             break
-        slab_amount = min(taxable, high - low + 1)
+        slab_width = high - low
+        slab_amount = min(taxable, slab_width)
         tax += slab_amount * rate
         taxable -= slab_amount
-    # Rebate u/s 87A: No tax if income <= 7L
-    if annual_taxable_income <= 700000:
+    # Rebate u/s 87A: No tax if taxable income (post-std-deduction) <= 7L
+    if gross_taxable <= 700000:
         tax = 0
+    else:
+        # Marginal relief: tax shall not exceed (taxable_income - 7,00,000)
+        marginal_cap = gross_taxable - 700000
+        if tax > marginal_cap:
+            tax = marginal_cap
     cess = tax * CESS_RATE
     return {
         "basic_tax": round(tax, 2),
