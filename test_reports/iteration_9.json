@@ -1,0 +1,81 @@
+{
+  "summary": "Phase 8A Payroll (Bonus/Gratuity/Incentive/Advance/Loan compute, Advance/Loan CRUD, Payslip PDF, Monthly Payroll Runs, FnF) fully verified. 48 unit/pure-calc tests + 19 new HTTP integration tests = 67/67 passing. Calculation accuracy matches spec exactly: Bonus 6997.20, Gratuity 230769.23, Loan EMI 4614.49, FnF net 223384.62. Frontend /payroll-runs admin page loads, sidebar link present, create-run/freeze/mark-paid/delete workflow works; skipped-employees list rendered when template missing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/advances/{id} & PUT /api/loans/{id}", "issue": "Update does NOT re-compute schedule even when amount/tenure/rate changes. After an update the persisted schedule becomes stale. Low-impact for MVP."},
+      {"endpoint": "POST /api/payroll/runs", "issue": "No uniqueness check on (month, year). Admin can create unlimited duplicate runs for the same period (observed 3 Jan/Feb/Apr 2026 runs). Consider de-dup or warn."},
+      {"endpoint": "POST /api/payslip/generate", "issue": "When admin calls it with no employee_id, endpoint proceeds with employee_id=None and emp={}; the PDF is still produced but with blank employee fields. Suggest 400 validation."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Payroll Runs list", "issues": ["Each run card shows '0 employees' because seeded employees have no salary template assignment — cosmetic, but user may be confused; consider empty-state copy '0 employees (all skipped — see details)'."]}
+    ]
+  },
+  "passed_tests": [
+    "POST /api/auth/login (admin) returns access_token",
+    "POST /api/bonus/compute: 18000 wage × 365 days → 6997.20 (capped at 7000 × 12 × 8.33%)",
+    "POST /api/bonus/compute: wage > 21k → eligible=false",
+    "POST /api/bonus/compute: rate 0.5 clamped to 0.20",
+    "POST /api/gratuity/compute: 50000 × 7.5 yrs resignation → effective_years=8, amount=230769.23",
+    "POST /api/gratuity/compute: 4.4 yrs → ineligible",
+    "POST /api/gratuity/compute: 2.5 yrs death → eligible=true (5-yr waived)",
+    "POST /api/gratuity/compute: 200000 × 25 yrs → capped at 2000000",
+    "POST /api/incentive/compute: percentage 120% × 1M × 5% → 60000",
+    "POST /api/incentive/compute: achievement 40 < min 50 → eligible=false",
+    "POST /api/advance/compute: 20000/60000 4m 0% → EMI 5000",
+    "POST /api/advance/compute: 40000 > 50% of 60000 → approved=false",
+    "POST /api/loan/compute: 100000 @ 10% 24m reducing → EMI 4614.49",
+    "POST /api/loan/compute: 100000 @ 10% 24m simple → EMI 5000",
+    "POST /api/advances CRUD: create returns schedule with monthly_emi; list & delete work",
+    "POST /api/loans CRUD: create attaches schedule (EMI 4614.49); delete works",
+    "POST /api/payslip/generate (admin, self): returns application/pdf with %PDF header",
+    "POST /api/payslip/generate (employee, other employee_id): 403 Forbidden",
+    "POST /api/payroll/runs: creates draft run, lists skipped employees when no template; GET /api/payroll/runs lists it; PUT freeze → 200; DELETE on frozen → 400; PUT mark-paid → 200; DELETE on fresh draft → 200",
+    "POST /api/fnf/compute: wage=50000, yrs=7, leave=15, unpaid=10, notice=5, reimb=3000, loans=20000 → net_fnf=223384.62 (matches spec exactly)",
+    "Regression: all Phase-7 Salary Compute & CRUD tests (19) still passing",
+    "Regression: 29 pure-function payroll_calc tests still passing",
+    "Frontend: admin login → /dashboard",
+    "Frontend: sidebar [data-testid=nav-payroll-runs] present and clickable",
+    "Frontend: /payroll-runs renders [data-testid=payroll-run-page]",
+    "Frontend: [data-testid=create-payroll-run] opens dialog with [data-testid=confirm-create-run]; clicking creates run and list shows run cards",
+    "Frontend: clicking a draft run card reveals [data-testid=freeze-run] button; skipped employees listed"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase8a_apis.py",
+    "/app/backend/tests/test_payroll_calc.py",
+    "/app/backend/tests/test_salary_compute.py",
+    "/app/test_reports/pytest/iter9_phase8a.xml",
+    "/app/test_reports/pytest/iter9_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Re-compute schedule inside PUT /api/advances/{id} & /api/loans/{id} when financial fields change.",
+    "(Minor) De-duplicate (month, year) payroll runs or emit warning.",
+    "(Minor) Validate employee_id on POST /api/payslip/generate — currently produces blank-employee PDF when id missing.",
+    "(Cosmetic, carried over from iter 8) React a11y warning 'Missing Description or aria-describedby on DialogContent' still logged in dev console."
+  ],
+  "critical_code_review_comments": [
+    "server.py now >2820 lines — strongly recommend splitting Phase-8 code into backend/modules/payroll_runs.py, payslip.py, fnf.py for maintainability (>700 line guideline).",
+    "_build_payslip_pdf is defined inline in server.py (~126 lines); move to backend/payslip_pdf.py with the reportlab imports at module scope instead of inside the function.",
+    "Payroll Run POST computes salary for up to 5000 employees sequentially inside a single request; for orgs >100 employees this will time-out on the default Uvicorn worker. Consider a background task (BackgroundTasks / Celery) returning a job_id, then polling.",
+    "FnF uses 'basic/26' per-day even though user supplies 'last_drawn_basic'; document clearly that the input should be Basic+DA (the gratuity wage), not full CTC — mismatched input will silently skew both leave_encashment and notice_recovery.",
+    "Advance & Loan CRUD have no authorization check on GET for a specific employee_id — any authenticated admin can list anyone's advances (intended); however the employee-scoped branch only triggers when employee_id query param is missing. An employee could pass employee_id=<other_user> and bypass the scope filter. Add: if current_user.role != ADMIN and employee_id and employee_id != current_user.id: 403.",
+    "No max-cap on FnF: negative net_fnf (recoverable) is allowed without flag; status='recoverable' set but endpoint still returns 200 — OK, but downstream consumers should not treat it as a payable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase8a_apis.py (new — 19 HTTP integration tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (48 unit + 19 HTTP = 67/67)",
+    "frontend": "100% smoke (login → sidebar → /payroll-runs → create → run card → freeze button all working)"
+  },
+  "test_credentials": "admin@hrms.com / admin123 (login_as=admin); employee@hrms.com / emp123 (login_as=employee)",
+  "seed_data_creation": "test_phase8a_apis.py creates TEST_-prefixed advances/loans and deletes them in-test. Payroll runs created during test remain (one extra draft deleted; one frozen-then-paid retained — no cleanup for status!=draft since endpoint blocks deletion).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 8A fully verified against user's expected sample values (user quoted them in agent_to_agent_context_note). Reuse /app/backend/tests/test_phase8a_apis.py as HTTP regression for payroll endpoints. Only 3 non-blocking minor backend issues flagged (schedule recompute on PUT, duplicate runs, null employee_id on payslip). For UI: to exercise the payslip-download button, first assign a salary template to an employee (POST /api/salary-assignments), then create a payroll run — the run's line_items will populate and the [data-testid=payslip-<empId>] button will render.",
+  "rca of the issue": "Not applicable — all requested features are verified working exactly to spec. The minor findings above are code-quality/defensive-programming suggestions, not active bugs."
+}

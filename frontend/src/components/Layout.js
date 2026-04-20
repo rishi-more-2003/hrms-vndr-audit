@@ -22,6 +22,7 @@ const Layout = ({ children }) => {
       { name: 'Compliance', path: '/compliance', icon: ShieldCheck, module: 'compliance' },
       { name: 'Policies', path: '/policies', icon: Scroll, module: 'policies' },
       { name: 'Salary', path: '/salary-structure', icon: Wallet, module: 'salary' },
+      { name: 'Payroll Runs', path: '/payroll-runs', icon: CurrencyDollar, module: 'payroll_runs' },
       { name: 'Employees', path: '/employees', icon: Users, module: 'employees' },
       { name: 'Departments', path: '/departments', icon: Buildings, module: 'departments' },
       { name: 'Hierarchy', path: '/hierarchy', icon: TreeStructure, module: 'hierarchy' },

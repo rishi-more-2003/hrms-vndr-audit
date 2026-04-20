@@ -69,7 +69,9 @@ export const salaryAPI = {
 
 export const payslipAPI = {
   getAll: (employeeId) => api.get(`/payslips/${employeeId}`),
-  generate: (employeeId, month, year) => api.post('/payslips/generate', null, { params: { employee_id: employeeId, month, year } }),
+  generate: (data) => api.post('/payslip/generate', data, { responseType: 'blob' }),
+  // legacy:
+  generateLegacy: (employeeId, month, year) => api.post('/payslips/generate', null, { params: { employee_id: employeeId, month, year } }),
 };
 
 export const taxAPI = {
@@ -213,6 +215,41 @@ export const salaryAssignmentAPI = {
 
 export const salaryComputeAPI = {
   compute: (data) => api.post('/salary-compute', data),
+};
+
+export const bonusAPI = {
+  compute: (data) => api.post('/bonus/compute', data),
+};
+export const gratuityAPI = {
+  compute: (data) => api.post('/gratuity/compute', data),
+};
+export const incentiveAPI = {
+  compute: (data) => api.post('/incentive/compute', data),
+};
+export const advanceAPI = {
+  compute: (data) => api.post('/advance/compute', data),
+  getAll: (employeeId) => api.get('/advances' + (employeeId ? '?employee_id=' + employeeId : '')),
+  create: (data) => api.post('/advances', data),
+  update: (id, data) => api.put(`/advances/${id}`, data),
+  delete: (id) => api.delete(`/advances/${id}`),
+};
+export const loanAPI = {
+  compute: (data) => api.post('/loan/compute', data),
+  getAll: (employeeId) => api.get('/loans' + (employeeId ? '?employee_id=' + employeeId : '')),
+  create: (data) => api.post('/loans', data),
+  update: (id, data) => api.put(`/loans/${id}`, data),
+  delete: (id) => api.delete(`/loans/${id}`),
+};
+export const payrollRunAPI = {
+  getAll: () => api.get('/payroll/runs'),
+  getById: (id) => api.get(`/payroll/runs/${id}`),
+  create: (data) => api.post('/payroll/runs', data),
+  freeze: (id) => api.put(`/payroll/runs/${id}/freeze`),
+  markPaid: (id) => api.put(`/payroll/runs/${id}/mark-paid`),
+  delete: (id) => api.delete(`/payroll/runs/${id}`),
+};
+export const fnfAPI = {
+  compute: (data) => api.post('/fnf/compute', data),
 };
 
 export default api;

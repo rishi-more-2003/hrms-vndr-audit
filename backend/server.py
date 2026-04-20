@@ -16,6 +16,10 @@ from pathlib import Path
 import uuid
 import requests
 from indian_tax import calculate_full_salary, calculate_pf, calculate_esic, calculate_professional_tax, calculate_income_tax
+from payroll_calc import (
+    calculate_statutory_bonus, calculate_gratuity, calculate_incentive,
+    calculate_advance_schedule, calculate_loan_emi,
+)
 from storage import init_storage, put_object, get_object
 
 ROOT_DIR = Path(__file__).parent
@@ -2228,6 +2232,568 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
         result["gross_daily"] = round(gross_monthly / 30, 2)
         result["net_daily"] = round(net_monthly / 30, 2)
     return result
+
+
+# ══════════════════════  BONUS / GRATUITY / INCENTIVE / ADVANCE / LOAN  ══════════════════════
+
+@api_router.post("/bonus/compute")
+async def compute_bonus(data: dict, current_user: dict = Depends(get_current_user)):
+    """Payment of Bonus Act 1965: compute annual statutory bonus."""
+    wage = float(data.get("monthly_wage") or 0)
+    days = int(data.get("days_worked") or 365)
+    rate = data.get("bonus_rate")
+    elig = data.get("eligibility_ceiling")
+    calc = data.get("calc_ceiling")
+    rate = float(rate) if rate not in (None, "") else None
+    elig = float(elig) if elig not in (None, "") else None
+    calc = float(calc) if calc not in (None, "") else None
+    return calculate_statutory_bonus(wage, days, rate, elig, calc)
+
+
+@api_router.post("/gratuity/compute")
+async def compute_gratuity(data: dict, current_user: dict = Depends(get_current_user)):
+    """Payment of Gratuity Act 1972: compute gratuity on exit."""
+    wage = float(data.get("last_drawn_wage") or 0)
+    years = float(data.get("years_of_service") or 0)
+    reason = data.get("exit_reason") or "resignation"
+    days_per_year = data.get("days_per_year")
+    divisor = data.get("divisor")
+    cap = data.get("statutory_cap")
+    return calculate_gratuity(wage, years, reason,
+                              int(days_per_year) if days_per_year else None,
+                              int(divisor) if divisor else None,
+                              float(cap) if cap else None)
+
+
+@api_router.post("/incentive/compute")
+async def compute_incentive(data: dict, current_user: dict = Depends(get_current_user)):
+    """Incentive / Commission computation."""
+    return calculate_incentive(
+        achievement_percent=float(data.get("achievement_percent") or 0),
+        target_amount=float(data.get("target_amount") or 0),
+        incentive_type=data.get("incentive_type", "fixed"),
+        fixed_amount=float(data.get("fixed_amount") or 0),
+        percentage_rate=float(data.get("percentage_rate") or 0),
+        min_achievement=float(data.get("min_achievement") or 0),
+        prorata=bool(data.get("prorata", True)),
+        slabs=data.get("slabs") or [],
+    )
+
+
+@api_router.post("/advance/compute")
+async def compute_advance(data: dict, current_user: dict = Depends(get_current_user)):
+    """Salary Advance EMI schedule."""
+    return calculate_advance_schedule(
+        advance_amount=float(data.get("advance_amount") or 0),
+        monthly_salary=float(data.get("monthly_salary") or 0),
+        repayment_months=int(data.get("repayment_months") or 1),
+        interest_rate_pa=float(data.get("interest_rate_pa") or 0),
+        max_advance_pct=float(data.get("max_advance_pct") or 50),
+    )
+
+
+@api_router.post("/loan/compute")
+async def compute_loan(data: dict, current_user: dict = Depends(get_current_user)):
+    """Employee Loan EMI schedule (reducing balance or simple interest)."""
+    return calculate_loan_emi(
+        principal=float(data.get("principal") or 0),
+        rate_pa=float(data.get("rate_pa") or 0),
+        tenure_months=int(data.get("tenure_months") or 1),
+        interest_type=data.get("interest_type", "reducing_balance"),
+        max_emi_pct=float(data["max_emi_pct"]) if data.get("max_emi_pct") not in (None, "") else None,
+        monthly_salary=float(data["monthly_salary"]) if data.get("monthly_salary") not in (None, "") else None,
+    )
+
+
+# ══════════════════════  EMPLOYEE ADVANCE / LOAN RECORDS  ══════════════════════
+# Track active advances and loans with repayment progress
+
+@api_router.get("/advances")
+async def get_advances(employee_id: str = None, current_user: dict = Depends(get_current_user)):
+    q = {}
+    if employee_id:
+        q["employee_id"] = employee_id
+    elif current_user["role"] != UserRole.ADMIN:
+        q["employee_id"] = current_user["id"]
+    return await db.advances.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.post("/advances")
+async def create_advance(data: dict, current_user: dict = Depends(get_current_user)):
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["status"] = data.get("status", "pending")
+    data["paid_installments"] = 0
+    # Compute schedule
+    sched = calculate_advance_schedule(
+        advance_amount=float(data.get("advance_amount") or 0),
+        monthly_salary=float(data.get("monthly_salary") or 0),
+        repayment_months=int(data.get("repayment_months") or 1),
+        interest_rate_pa=float(data.get("interest_rate_pa") or 0),
+        max_advance_pct=float(data.get("max_advance_pct") or 50),
+    )
+    data["schedule"] = sched
+    await db.advances.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+
+@api_router.put("/advances/{advance_id}")
+async def update_advance(advance_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.advances.update_one({"id": advance_id}, {"$set": data})
+    return {"message": "Advance updated"}
+
+
+@api_router.delete("/advances/{advance_id}")
+async def delete_advance(advance_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.advances.delete_one({"id": advance_id})
+    return {"message": "Advance deleted"}
+
+
+@api_router.get("/loans")
+async def get_loans(employee_id: str = None, current_user: dict = Depends(get_current_user)):
+    q = {}
+    if employee_id:
+        q["employee_id"] = employee_id
+    elif current_user["role"] != UserRole.ADMIN:
+        q["employee_id"] = current_user["id"]
+    return await db.loans.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.post("/loans")
+async def create_loan(data: dict, current_user: dict = Depends(get_current_user)):
+    data["id"] = str(uuid.uuid4())
+    data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["status"] = data.get("status", "pending")
+    data["paid_installments"] = 0
+    sched = calculate_loan_emi(
+        principal=float(data.get("principal") or 0),
+        rate_pa=float(data.get("rate_pa") or 0),
+        tenure_months=int(data.get("tenure_months") or 1),
+        interest_type=data.get("interest_type", "reducing_balance"),
+        max_emi_pct=float(data["max_emi_pct"]) if data.get("max_emi_pct") not in (None, "") else None,
+        monthly_salary=float(data["monthly_salary"]) if data.get("monthly_salary") not in (None, "") else None,
+    )
+    data["schedule"] = sched
+    await db.loans.insert_one(data)
+    return {k: v for k, v in data.items() if k != "_id"}
+
+
+@api_router.put("/loans/{loan_id}")
+async def update_loan(loan_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.loans.update_one({"id": loan_id}, {"$set": data})
+    return {"message": "Loan updated"}
+
+
+@api_router.delete("/loans/{loan_id}")
+async def delete_loan(loan_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.loans.delete_one({"id": loan_id})
+    return {"message": "Loan deleted"}
+
+
+# ══════════════════════  PAYSLIP PDF  ══════════════════════
+
+def _build_payslip_pdf(payslip: dict) -> bytes:
+    """Generate a styled payslip PDF from the compute result + employee metadata."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18*mm, rightMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    h = ParagraphStyle("H", parent=styles["Heading1"], fontSize=18, textColor=colors.HexColor("#2A2624"), spaceAfter=6)
+    sub = ParagraphStyle("Sub", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#6A625E"), spaceAfter=12)
+    lbl = ParagraphStyle("Lbl", parent=styles["Normal"], fontSize=8, textColor=colors.HexColor("#A28B7A"))
+    val = ParagraphStyle("Val", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#2A2624"))
+
+    story = []
+    emp = payslip.get("employee", {})
+    period = payslip.get("period", {})
+    compute = payslip.get("compute", {})
+    org = payslip.get("organization", {})
+
+    story.append(Paragraph(org.get("name", "Organization"), h))
+    story.append(Paragraph(f"Payslip for {period.get('month', '')} {period.get('year', '')}", sub))
+
+    # Employee header
+    emp_data = [
+        ["Employee", emp.get("full_name", "-"), "Employee Code", emp.get("employee_code", "-")],
+        ["Designation", emp.get("designation", "-"), "Department", emp.get("department_name", "-")],
+        ["PAN", emp.get("pan", "-"), "PF Number", emp.get("pf_number", "-")],
+        ["Bank A/C", emp.get("bank_account", "-"), "Pay Period", f"{period.get('month','')}/{period.get('year','')}"],
+    ]
+    t = Table(emp_data, colWidths=[32*mm, 52*mm, 32*mm, 52*mm])
+    t.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("TEXTCOLOR", (0,0), (0,-1), colors.HexColor("#A28B7A")),
+        ("TEXTCOLOR", (2,0), (2,-1), colors.HexColor("#A28B7A")),
+        ("TEXTCOLOR", (1,0), (1,-1), colors.HexColor("#2A2624")),
+        ("TEXTCOLOR", (3,0), (3,-1), colors.HexColor("#2A2624")),
+        ("ROWBACKGROUNDS", (0,0), (-1,-1), [colors.HexColor("#F9F6F0"), colors.white]),
+        ("BOX", (0,0), (-1,-1), 0.5, colors.HexColor("#E8E2D9")),
+        ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#E8E2D9")),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ("TOPPADDING", (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 8))
+
+    # Earnings + Deductions tables side by side
+    earnings = compute.get("earnings", [])
+    deductions = compute.get("deductions", [])
+    provisions = compute.get("provisions", [])
+
+    def _rupee(n):
+        return f"₹ {float(n or 0):,.2f}"
+
+    earnings_rows = [["Earnings", "Amount"]] + [[e.get("name", ""), _rupee(e.get("amount", 0))] for e in earnings]
+    earnings_rows.append(["Gross Earnings", _rupee(compute.get("gross_monthly", 0))])
+
+    deductions_rows = [["Deductions", "Amount"]] + [[d.get("name", ""), _rupee(d.get("amount", 0))] for d in deductions]
+    deductions_rows.append(["Total Deductions", _rupee(compute.get("total_deductions_monthly", 0))])
+
+    # Balance row counts
+    maxr = max(len(earnings_rows), len(deductions_rows))
+    while len(earnings_rows) < maxr: earnings_rows.insert(-1, ["", ""])
+    while len(deductions_rows) < maxr: deductions_rows.insert(-1, ["", ""])
+
+    e_table = Table(earnings_rows, colWidths=[55*mm, 30*mm])
+    d_table = Table(deductions_rows, colWidths=[55*mm, 30*mm])
+    def _style_tbl(tbl):
+        tbl.setStyle(TableStyle([
+            ("FONTSIZE", (0,0), (-1,-1), 9),
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#2A2624")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("BACKGROUND", (0,-1), (-1,-1), colors.HexColor("#F9F6F0")),
+            ("FONTNAME", (0,-1), (-1,-1), "Helvetica-Bold"),
+            ("ALIGN", (1,0), (1,-1), "RIGHT"),
+            ("BOX", (0,0), (-1,-1), 0.5, colors.HexColor("#E8E2D9")),
+            ("INNERGRID", (0,0), (-1,-1), 0.3, colors.HexColor("#E8E2D9")),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+    _style_tbl(e_table); _style_tbl(d_table)
+    both = Table([[e_table, d_table]], colWidths=[90*mm, 90*mm])
+    both.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"), ("LEFTPADDING", (0,0), (-1,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
+    story.append(both)
+    story.append(Spacer(1, 10))
+
+    # Net pay box
+    net = compute.get("net_monthly", 0)
+    net_table = Table([["NET PAY", _rupee(net)]], colWidths=[90*mm, 90*mm])
+    net_table.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 14),
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#D96C5B")),
+        ("TEXTCOLOR", (0,0), (-1,-1), colors.white),
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica-Bold"),
+        ("ALIGN", (1,0), (1,0), "RIGHT"),
+        ("TOPPADDING", (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 10),
+        ("LEFTPADDING", (0,0), (-1,-1), 12),
+        ("RIGHTPADDING", (0,0), (-1,-1), 12),
+    ]))
+    story.append(net_table)
+    story.append(Spacer(1, 12))
+
+    # Employer provisions (CTC breakup)
+    if provisions:
+        prov_rows = [["Employer Contributions (CTC)", "Amount"]] + [[p.get("name",""), _rupee(p.get("amount",0))] for p in provisions]
+        prov_rows.append(["Total CTC", _rupee(compute.get("ctc_monthly", 0))])
+        p_table = Table(prov_rows, colWidths=[130*mm, 50*mm])
+        _style_tbl(p_table)
+        story.append(p_table)
+        story.append(Spacer(1, 10))
+
+    # Footer
+    story.append(Paragraph("This is a computer-generated payslip and does not require a signature.", lbl))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+@api_router.post("/payslip/generate")
+async def generate_payslip(data: dict, current_user: dict = Depends(get_current_user)):
+    """
+    Generate a Payslip PDF for an employee for a given month.
+    Payload: {employee_id, month, year, components (optional override), pay_type, use_statutory_auto, ...}
+    Returns: PDF bytes (application/pdf).
+    """
+    employee_id = data.get("employee_id")
+    month = int(data.get("month") or datetime.now(timezone.utc).month)
+    year = int(data.get("year") or datetime.now(timezone.utc).year)
+
+    # Permission: employees can only generate their own
+    if current_user["role"] != UserRole.ADMIN and current_user["id"] != employee_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    emp = await db.employees.find_one({"id": employee_id}, {"_id": 0}) or {}
+    if not emp:
+        # Fallback: user record
+        emp = await db.users.find_one({"id": employee_id}, {"_id": 0}) or {}
+
+    # Load department name
+    dept_name = "-"
+    if emp.get("department_id"):
+        dept = await db.departments.find_one({"id": emp["department_id"]}, {"_id": 0})
+        if dept: dept_name = dept.get("name", "-")
+
+    # Load org
+    org = await db.organization.find_one({}, {"_id": 0}) or {"name": "Organization"}
+
+    # Load assigned salary template if components not provided
+    components = data.get("components")
+    assignment = await db.salary_assignments.find_one({"employee_id": employee_id}, {"_id": 0})
+    tmpl = None
+    if assignment and assignment.get("salary_template_id"):
+        tmpl = await db.salary_templates.find_one({"id": assignment["salary_template_id"]}, {"_id": 0})
+    if components is None and tmpl:
+        components = tmpl.get("components", [])
+    if components is None:
+        components = []
+
+    # Compute via the same logic
+    compute_payload = {
+        "components": components,
+        "pay_type": data.get("pay_type") or (tmpl.get("pay_type") if tmpl else "monthly"),
+        "use_statutory_auto": data.get("use_statutory_auto", True) if tmpl is None else tmpl.get("use_statutory_auto", True),
+        "pf_template_id": (tmpl or {}).get("pf_template_id"),
+        "esic_template_id": (tmpl or {}).get("esic_template_id"),
+        "pt_template_id": (tmpl or {}).get("pt_template_id"),
+        "lwf_template_id": (tmpl or {}).get("lwf_template_id"),
+        "tds_template_id": (tmpl or {}).get("tds_template_id"),
+    }
+    compute = await compute_salary(compute_payload, current_user)
+
+    import calendar as _cal
+    payslip = {
+        "employee": {
+            "full_name": emp.get("full_name") or emp.get("email", "Employee"),
+            "employee_code": emp.get("employee_code", emp.get("id", "")[:8]),
+            "designation": emp.get("designation", "-"),
+            "department_name": dept_name,
+            "pan": emp.get("pan", "-"),
+            "pf_number": emp.get("pf_number", "-"),
+            "bank_account": emp.get("bank_account", "-"),
+        },
+        "organization": {"name": org.get("name", "Organization")},
+        "period": {"month": _cal.month_name[month], "year": year},
+        "compute": compute,
+    }
+
+    pdf_bytes = _build_payslip_pdf(payslip)
+    filename = f"payslip_{employee_id}_{year}_{month:02d}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+# ══════════════════════  MONTHLY PAYROLL RUN  ══════════════════════
+
+@api_router.get("/payroll/runs")
+async def list_payroll_runs(current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    return await db.payroll_runs.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api_router.get("/payroll/runs/{run_id}")
+async def get_payroll_run(run_id: str, current_user: dict = Depends(get_current_user)):
+    run = await db.payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(status_code=404, detail="Payroll run not found")
+    if current_user["role"] != UserRole.ADMIN:
+        # filter to own line
+        run["line_items"] = [li for li in run.get("line_items", []) if li.get("employee_id") == current_user["id"]]
+    return run
+
+
+@api_router.post("/payroll/runs")
+async def create_payroll_run(data: dict, current_user: dict = Depends(get_current_user)):
+    """
+    Create a Monthly Payroll Run.
+    Payload: {month, year, employee_ids (optional — else all active employees)}
+    For each employee:
+      - Loads assigned salary template (or skips if none)
+      - Computes salary via /salary-compute logic
+      - Records line item
+    """
+    require_admin(current_user)
+    month = int(data.get("month") or datetime.now(timezone.utc).month)
+    year = int(data.get("year") or datetime.now(timezone.utc).year)
+    employee_ids = data.get("employee_ids") or []
+
+    if not employee_ids:
+        emps = await db.employees.find({"status": "active"}, {"_id": 0}).to_list(5000)
+        employee_ids = [e["id"] for e in emps]
+
+    line_items = []
+    total_gross = total_deductions = total_net = total_ctc = 0.0
+    skipped = []
+
+    for emp_id in employee_ids:
+        assignment = await db.salary_assignments.find_one({"employee_id": emp_id}, {"_id": 0})
+        if not assignment or not assignment.get("salary_template_id"):
+            skipped.append({"employee_id": emp_id, "reason": "no salary template assigned"})
+            continue
+        tmpl = await db.salary_templates.find_one({"id": assignment["salary_template_id"]}, {"_id": 0})
+        if not tmpl:
+            skipped.append({"employee_id": emp_id, "reason": "template not found"})
+            continue
+
+        compute_payload = {
+            "components": tmpl.get("components", []),
+            "pay_type": tmpl.get("pay_type", "monthly"),
+            "use_statutory_auto": tmpl.get("use_statutory_auto", True),
+            "pf_template_id": tmpl.get("pf_template_id"),
+            "esic_template_id": tmpl.get("esic_template_id"),
+            "pt_template_id": tmpl.get("pt_template_id"),
+            "lwf_template_id": tmpl.get("lwf_template_id"),
+            "tds_template_id": tmpl.get("tds_template_id"),
+        }
+        result = await compute_salary(compute_payload, current_user)
+
+        emp = await db.employees.find_one({"id": emp_id}, {"_id": 0}) or {}
+        line_items.append({
+            "employee_id": emp_id,
+            "full_name": emp.get("full_name", ""),
+            "employee_code": emp.get("employee_code", ""),
+            "template_id": tmpl.get("id"),
+            "template_name": tmpl.get("template_name"),
+            "gross_monthly": result.get("gross_monthly", 0),
+            "total_deductions_monthly": result.get("total_deductions_monthly", 0),
+            "total_provisions_monthly": result.get("total_provisions_monthly", 0),
+            "net_monthly": result.get("net_monthly", 0),
+            "ctc_monthly": result.get("ctc_monthly", 0),
+            "earnings": result.get("earnings", []),
+            "deductions": result.get("deductions", []),
+            "provisions": result.get("provisions", []),
+            "statutory": result.get("statutory", {}),
+        })
+        total_gross += result.get("gross_monthly", 0)
+        total_deductions += result.get("total_deductions_monthly", 0)
+        total_net += result.get("net_monthly", 0)
+        total_ctc += result.get("ctc_monthly", 0)
+
+    run = {
+        "id": str(uuid.uuid4()),
+        "month": month, "year": year,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": current_user["id"],
+        "status": "draft",  # draft | frozen | paid
+        "employee_count": len(line_items),
+        "skipped": skipped,
+        "totals": {
+            "gross": round(total_gross, 2),
+            "deductions": round(total_deductions, 2),
+            "net": round(total_net, 2),
+            "ctc": round(total_ctc, 2),
+        },
+        "line_items": line_items,
+    }
+    await db.payroll_runs.insert_one(run)
+    return {k: v for k, v in run.items() if k != "_id"}
+
+
+@api_router.put("/payroll/runs/{run_id}/freeze")
+async def freeze_payroll_run(run_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.payroll_runs.update_one({"id": run_id}, {"$set": {"status": "frozen",
+                                                                "frozen_at": datetime.now(timezone.utc).isoformat()}})
+    return {"message": "Payroll run frozen"}
+
+
+@api_router.put("/payroll/runs/{run_id}/mark-paid")
+async def mark_payroll_paid(run_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.payroll_runs.update_one({"id": run_id}, {"$set": {"status": "paid",
+                                                                "paid_at": datetime.now(timezone.utc).isoformat()}})
+    return {"message": "Payroll run marked paid"}
+
+
+@api_router.delete("/payroll/runs/{run_id}")
+async def delete_payroll_run(run_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    # Only allow deletion if still in draft
+    run = await db.payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    if run and run.get("status") != "draft":
+        raise HTTPException(status_code=400, detail="Cannot delete frozen/paid run")
+    await db.payroll_runs.delete_one({"id": run_id})
+    return {"message": "Payroll run deleted"}
+
+
+# ══════════════════════  FULL & FINAL SETTLEMENT  ══════════════════════
+
+@api_router.post("/fnf/compute")
+async def compute_fnf(data: dict, current_user: dict = Depends(get_current_user)):
+    """
+    Full & Final Settlement computation on employee exit.
+    Payload: {employee_id, last_working_date, last_drawn_basic, years_of_service,
+              leave_balance_days, unpaid_salary_days, notice_period_days_pending,
+              exit_reason, notice_period_recovery_per_day, pending_reimbursements, outstanding_loans}
+    """
+    require_admin(current_user)
+    employee_id = data.get("employee_id")
+    last_wage = float(data.get("last_drawn_basic") or 0)
+    years = float(data.get("years_of_service") or 0)
+    leave_days = float(data.get("leave_balance_days") or 0)
+    unpaid_days = float(data.get("unpaid_salary_days") or 0)
+    notice_pending = float(data.get("notice_period_days_pending") or 0)
+    exit_reason = data.get("exit_reason") or "resignation"
+    reimburse = float(data.get("pending_reimbursements") or 0)
+    loans = float(data.get("outstanding_loans") or 0)
+
+    # 1. Unpaid salary
+    per_day = last_wage / 26 if last_wage else 0
+    unpaid_salary = round(per_day * unpaid_days, 2)
+
+    # 2. Leave encashment (leave balance × per day basic)
+    leave_encashment = round(per_day * leave_days, 2)
+
+    # 3. Gratuity (if eligible)
+    g = calculate_gratuity(last_wage, years, exit_reason)
+
+    # 4. Notice period recovery (if shortfall)
+    notice_recovery = round(per_day * notice_pending, 2)
+
+    # 5. Outstanding dues = loans + advance remaining
+    # Already summed in `loans` input
+
+    total_payable = unpaid_salary + leave_encashment + (g.get("gratuity_amount", 0) if g.get("eligible") else 0) + reimburse
+    total_recoverable = notice_recovery + loans
+    net_fnf = round(total_payable - total_recoverable, 2)
+
+    return {
+        "employee_id": employee_id,
+        "exit_reason": exit_reason,
+        "payable": {
+            "unpaid_salary": unpaid_salary,
+            "leave_encashment": leave_encashment,
+            "gratuity": g,
+            "pending_reimbursements": reimburse,
+            "total_payable": round(total_payable, 2),
+        },
+        "recoverable": {
+            "notice_period_recovery": notice_recovery,
+            "outstanding_loans_advances": loans,
+            "total_recoverable": round(total_recoverable, 2),
+        },
+        "net_fnf": net_fnf,
+        "status": "payable" if net_fnf >= 0 else "recoverable",
+    }
 
 
 # ── Mount ──

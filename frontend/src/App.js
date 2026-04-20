@@ -20,6 +20,7 @@ import OrganizationPage from './pages/OrganizationPage';
 import CompliancePage from './pages/CompliancePage';
 import PolicyPage from './pages/PolicyPage';
 import SalaryStructurePage from './pages/SalaryStructurePage';
+import PayrollRunPage from './pages/PayrollRunPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -55,6 +56,7 @@ function AppRoutes() {
       <Route path="/compliance" element={<AdminRoute><Layout><CompliancePage /></Layout></AdminRoute>} />
       <Route path="/policies" element={<AdminRoute><Layout><PolicyPage /></Layout></AdminRoute>} />
       <Route path="/salary-structure" element={<AdminRoute><Layout><SalaryStructurePage /></Layout></AdminRoute>} />
+      <Route path="/payroll-runs" element={<AdminRoute><Layout><PayrollRunPage /></Layout></AdminRoute>} />
       <Route path="/hierarchy" element={<AdminRoute><Layout><HierarchyPage /></Layout></AdminRoute>} />
       <Route path="/attendance" element={<PrivateRoute requiredModule="attendance"><Layout><AttendancePage /></Layout></PrivateRoute>} />
       <Route path="/leave" element={<PrivateRoute requiredModule="leave"><Layout><LeavePage /></Layout></PrivateRoute>} />
