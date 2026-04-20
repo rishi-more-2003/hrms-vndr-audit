@@ -2310,11 +2310,12 @@ async def compute_loan(data: dict, current_user: dict = Depends(get_current_user
 
 @api_router.get("/advances")
 async def get_advances(employee_id: str = None, current_user: dict = Depends(get_current_user)):
-    q = {}
-    if employee_id:
-        q["employee_id"] = employee_id
-    elif current_user["role"] != UserRole.ADMIN:
-        q["employee_id"] = current_user["id"]
+    # Employees can only see their own — admins can filter by anyone
+    if current_user["role"] != UserRole.ADMIN:
+        if employee_id and employee_id != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        employee_id = current_user["id"]
+    q = {"employee_id": employee_id} if employee_id else {}
     return await db.advances.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
@@ -2341,6 +2342,18 @@ async def create_advance(data: dict, current_user: dict = Depends(get_current_us
 async def update_advance(advance_id: str, data: dict, current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Re-compute schedule when any financial field changes
+    financial_fields = {"advance_amount", "monthly_salary", "repayment_months", "interest_rate_pa", "max_advance_pct"}
+    if financial_fields & set(data.keys()):
+        existing = await db.advances.find_one({"id": advance_id}, {"_id": 0}) or {}
+        merged = {**existing, **data}
+        data["schedule"] = calculate_advance_schedule(
+            advance_amount=float(merged.get("advance_amount") or 0),
+            monthly_salary=float(merged.get("monthly_salary") or 0),
+            repayment_months=int(merged.get("repayment_months") or 1),
+            interest_rate_pa=float(merged.get("interest_rate_pa") or 0),
+            max_advance_pct=float(merged.get("max_advance_pct") or 50),
+        )
     await db.advances.update_one({"id": advance_id}, {"$set": data})
     return {"message": "Advance updated"}
 
@@ -2354,11 +2367,11 @@ async def delete_advance(advance_id: str, current_user: dict = Depends(get_curre
 
 @api_router.get("/loans")
 async def get_loans(employee_id: str = None, current_user: dict = Depends(get_current_user)):
-    q = {}
-    if employee_id:
-        q["employee_id"] = employee_id
-    elif current_user["role"] != UserRole.ADMIN:
-        q["employee_id"] = current_user["id"]
+    if current_user["role"] != UserRole.ADMIN:
+        if employee_id and employee_id != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        employee_id = current_user["id"]
+    q = {"employee_id": employee_id} if employee_id else {}
     return await db.loans.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
@@ -2385,6 +2398,18 @@ async def create_loan(data: dict, current_user: dict = Depends(get_current_user)
 async def update_loan(loan_id: str, data: dict, current_user: dict = Depends(get_current_user)):
     require_admin(current_user)
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    financial_fields = {"principal", "rate_pa", "tenure_months", "interest_type", "max_emi_pct", "monthly_salary"}
+    if financial_fields & set(data.keys()):
+        existing = await db.loans.find_one({"id": loan_id}, {"_id": 0}) or {}
+        merged = {**existing, **data}
+        data["schedule"] = calculate_loan_emi(
+            principal=float(merged.get("principal") or 0),
+            rate_pa=float(merged.get("rate_pa") or 0),
+            tenure_months=int(merged.get("tenure_months") or 1),
+            interest_type=merged.get("interest_type", "reducing_balance"),
+            max_emi_pct=float(merged["max_emi_pct"]) if merged.get("max_emi_pct") not in (None, "") else None,
+            monthly_salary=float(merged["monthly_salary"]) if merged.get("monthly_salary") not in (None, "") else None,
+        )
     await db.loans.update_one({"id": loan_id}, {"$set": data})
     return {"message": "Loan updated"}
 
@@ -2532,6 +2557,8 @@ async def generate_payslip(data: dict, current_user: dict = Depends(get_current_
     Returns: PDF bytes (application/pdf).
     """
     employee_id = data.get("employee_id")
+    if not employee_id:
+        raise HTTPException(status_code=400, detail="employee_id is required")
     month = int(data.get("month") or datetime.now(timezone.utc).month)
     year = int(data.get("year") or datetime.now(timezone.utc).year)
 
@@ -2635,6 +2662,12 @@ async def create_payroll_run(data: dict, current_user: dict = Depends(get_curren
     month = int(data.get("month") or datetime.now(timezone.utc).month)
     year = int(data.get("year") or datetime.now(timezone.utc).year)
     employee_ids = data.get("employee_ids") or []
+    force = bool(data.get("force", False))
+
+    # Block duplicate non-draft runs for the same period; warn on duplicate drafts
+    existing_same_period = await db.payroll_runs.find_one({"month": month, "year": year, "status": {"$in": ["frozen", "paid"]}}, {"_id": 0})
+    if existing_same_period and not force:
+        raise HTTPException(status_code=409, detail=f"A {existing_same_period['status']} payroll run already exists for {month}/{year}. Pass force=true to override.")
 
     if not employee_ids:
         emps = await db.employees.find({"status": "active"}, {"_id": 0}).to_list(5000)

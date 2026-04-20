@@ -213,9 +213,9 @@ class TestPayslip:
 # ═══════════════════════  Payroll Run  ═══════════════════════
 class TestPayrollRun:
     def test_create_list_delete(self, admin_headers):
-        # Create with empty employee list filter — backend will list skipped if none have template
+        # Use force=true so duplicate-period guard doesn't trip when prior tests leave frozen/paid runs.
         r = requests.post(f"{BASE_URL}/api/payroll/runs", headers=admin_headers,
-                          json={"month": 1, "year": 2026, "employee_ids": ["NON_EXISTENT_ID_XYZ"]})
+                          json={"month": 1, "year": 2026, "employee_ids": ["NON_EXISTENT_ID_XYZ"], "force": True})
         assert r.status_code == 200, r.text
         run = r.json()
         assert run["status"] == "draft"
@@ -241,9 +241,10 @@ class TestPayrollRun:
         assert r.status_code == 200
 
         # cleanup: set back to draft directly via mongo? — Skip. Leave test record.
-        # Test a separate draft can be deleted:
+        # Test a separate draft can be deleted (use force since prior runs may be frozen/paid):
         r2 = requests.post(f"{BASE_URL}/api/payroll/runs", headers=admin_headers,
-                           json={"month": 1, "year": 2026, "employee_ids": ["NON_EXISTENT_ID_Y"]})
+                           json={"month": 1, "year": 2026, "employee_ids": ["NON_EXISTENT_ID_Y"], "force": True})
+        assert r2.status_code == 200, r2.text
         rid2 = r2.json()["id"]
         d = requests.delete(f"{BASE_URL}/api/payroll/runs/{rid2}", headers=admin_headers)
         assert d.status_code == 200

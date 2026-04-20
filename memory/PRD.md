@@ -2,56 +2,82 @@
 
 ## Architecture
 - Frontend: React 19 + Tailwind + Shadcn/UI + Phosphor Icons
-- Backend: FastAPI + MongoDB, Auth: JWT, Storage: Emergent Object Storage
+- Backend: FastAPI + MongoDB, Auth: JWT, Storage: Emergent Object Storage, PDF: reportlab
 
-## Implemented (Phases 1-7)
+## Implemented (Phases 1-8A)
 
 ### Phase 1-3: Core HRMS, Indian Compliance, Organization & Statutory Compliance
 ### Phase 4-5: Policy Management (10 types), Enhanced Attendance Policy
 ### Phase 6: Attendance Collection & Management (clock-in/out, manual, missed-punch, bulk month-end, dual view)
+### Phase 7: Salary Structure (components + templates + compute engine, Indian Labour Law-compliant)
 
-### Phase 7 - Salary Structure (Feb 19, 2026 — hardened)
-**Components library**: Earnings, Deductions, Provisions with category (standard/statutory), statutory badges (PF/ESIC/PT/LWF/OT/TDS), classification (inclusion_wages / exclusion / others), calc_type (fixed_amount, percentage_of_basic, percentage_of_gross, percentage_of_ctc), fixed vs variable, allow-direct-entry flag.
+### Phase 8A — P0 Payroll Completion (Feb 20, 2026)
+**New calculation engines** in `/app/backend/payroll_calc.py`:
+- **Bonus** (Payment of Bonus Act 1965): ₹21k eligibility ceiling, ₹7k calc ceiling, 8.33–20% band, pro-rata.
+- **Gratuity** (Payment of Gratuity Act 1972): 15/26 formula, 5-yr rule (waived on death/disability), ₹20L cap.
+- **Incentive/Commission**: fixed, percentage, slab-based, target-based with min-achievement.
+- **Salary Advance**: EMI schedule with interest, max % of salary eligibility.
+- **Employee Loan**: reducing-balance / simple interest, EMI % cap eligibility.
 
-**Auto-pairing**: Creating a deduction with `auto_pair_key` (pf | esic | lwf) auto-creates partner provisions:
-- PF → pf_employer_provision, pf_admin_charges_provision, pf_edli_charges_provision
-- ESIC → esic_employer_provision
-- LWF → lwf_employer_provision
-Response returns both `auto_created_provisions` (newly created) and `paired_provisions` (full set including already-existing), so the UI always reflects the statutory pairing state.
+**New endpoints**:
+- `POST /api/bonus/compute`, `/gratuity/compute`, `/incentive/compute`, `/advance/compute`, `/loan/compute`
+- `/api/advances` and `/api/loans` CRUD (with auto-computed schedule; re-computes on financial-field update)
+- `POST /api/payslip/generate` → returns **styled PDF** (reportlab) with earnings/deductions/net pay/provisions
+- `/api/payroll/runs` CRUD — **Monthly Payroll Run engine**: processes all assigned employees, records skipped; freeze → paid workflow; duplicate-period guard (409 unless `force: true`)
+- `POST /api/fnf/compute` — **Full & Final Settlement**: unpaid salary + leave encashment + gratuity + reimbursements − notice recovery − outstanding loans
 
-**Salary Templates**: Group enabled components with per-component `calc_type`, amount/percentage, classification, statutory attracts flags. Optional linking of compliance templates (PF/ESIC/PT/LWF/TDS) per salary template for accurate slab-based computation.
+**New UI**: `/payroll-runs` admin page (PayrollRunPage.js) with:
+- Month/year create dialog with duplicate-period force-confirm
+- Run cards (draft/frozen/paid status)
+- Expandable line items showing earnings/deductions/provisions per employee
+- Per-employee Payslip PDF download button
+- Freeze, Mark-Paid, Delete workflow
 
-**Bulk Assignment**: Assign a salary template to all employees in a location or department.
+**Security**:
+- `/advances` & `/loans` GET enforces own-scope for employees; admins can filter by any employee_id
+- `/payslip/generate` validates employee_id; employees forbidden to generate others' payslips
 
-**Indian Labour Law-compliant Compute Engine** (`POST /api/salary-compute`):
-- 2-pass earnings calc: fixed + % of basic (determines subtotal), then % of gross, then % of CTC.
-- PF: 12% of min(pf_wages, ₹15,000) — employee + employer + 0.5% admin + 0.5% EDLI.
-- ESIC: only if gross ≤ ₹21,000 → 0.75% employee + 3.25% employer.
-- Professional Tax: slab-based per state (Maharashtra default: 0 / 175 / 200).
-- TDS: New Regime 2024-25 with 75k std deduction, 87A rebate (≤ 7L = 0 tax) + marginal relief; honours custom slabs from linked TDS template.
-- Returns per-component `amount` + totals: gross/net/CTC monthly + annual + full statutory summary.
-- `use_statutory_auto=false` allows manual-only mode (user-supplied deductions/provisions only).
-
-### Phase 8 (planned) - Deep Bonus/Gratuity/Advance/Loan policies (generic forms already exist; to deepen with Indian labour law specifics per user approval)
-
-## Key APIs
-- `POST /api/salary-components` — CRUD + auto-pairing
-- `POST /api/salary-templates` — CRUD
-- `POST /api/salary-compute` — authoritative calculation (backend-side)
-- `POST /api/salary-assignments/bulk` — assign template by location / department / explicit list
-- `POST /api/compliance-templates/{type}` — PF/ESIC/PT/LWF/TDS slab configs
-- `POST /api/policy-templates/{type}` — 10 policy types
+## Test coverage
+- `/app/backend/tests/test_salary_compute.py` — 19 tests (Phase 7)
+- `/app/backend/tests/test_payroll_calc.py` — 29 tests (pure functions)
+- `/app/backend/tests/test_phase8a_apis.py` — 19 HTTP integration tests
+- **Total: 67/67 passing** ✅
 
 ## Test Credentials
 - Admin: admin@hrms.com / admin123 (login_as: "admin")
 - Employee: employee@hrms.com / emp123
 - Employee: priya@hrms.com / priya123 (manager of Rahul)
 
-## Tests
-- `/app/backend/tests/test_salary_compute.py` — 19 pytest tests verifying Indian statutory accuracy (PF ceiling, ESIC threshold, PT slabs, TDS 87A rebate + marginal relief, totals identity, auto-pairing).
+## Remaining Roadmap (user approved "all of the above")
 
-## Backlog
-- **P0** Deepen Bonus / Gratuity / Incentive / Advance / Loan policies with Indian labour law specifics (Payment of Bonus Act 1965, Gratuity Act 1972).
-- **P1** Hardware/biometric attendance integrations.
-- **P2** Mobile/PWA responsiveness pass.
-- **Refactor** Split `server.py` (>2200 lines) into `routes/` modules: salary.py, policies.py, attendance.py, compliance.py, auth.py.
+### Phase 8B (next) — Workflow polish
+- "Assign Salary Template" shortcut from employee list (so Payroll Runs actually populate)
+- Payslip generation from Payroll Run (currently wired; needs seeded-data happy-path demo)
+
+### Phase 9 — Reports & Analytics (P2 from suggestions)
+- Dashboard charts (headcount, attrition, attendance trends, leave util, salary cost per dept)
+- Govt-format reports: PF ECR, ESIC Monthly Return, PT return, TDS Form 24Q, Salary Register
+- Audit log per entity
+
+### Phase 10 — HR Module Expansion
+- Recruitment/ATS, Performance Mgmt (KRAs/OKRs), L&D, Employee Self-Service extensions
+- Document vault per employee
+
+### Phase 11 — Platform & Security
+- **Refactor** `server.py` (2800+ lines) → modular `routes/`
+- Move `_build_payslip_pdf` to `payslip_pdf.py`
+- Background jobs for large payroll runs (>100 employees)
+- RBAC permission matrix UI, 2FA, session management, Google Auth
+- CI pytest GitHub Actions
+
+### Phase 12 — Mobile & SaaS
+- Mobile/PWA responsiveness
+- Multi-tenant support if selling SaaS
+- Theming (dark mode, logo/color per tenant)
+- Biometric / Geo-tagged attendance hardware
+- What-if CTC calculator for recruiters
+
+## Known minor issues (non-blocking)
+- Dialog accessibility: React dev warning persists despite hidden-description fix (cosmetic only)
+- Payroll Run for 100+ employees runs synchronously — should move to background task
+- Run cards show "0 employees" when no salary templates assigned — empty-state copy could clarify

@@ -33,7 +33,21 @@ export default function PayrollRunPage() {
       toast.success('Payroll run created');
       setCreateDialog(false);
       fetchRuns();
-    } catch (e) { toast.error('Failed to create run'); }
+    } catch (e) {
+      var msg = e.response?.data?.detail || 'Failed to create run';
+      if (e.response?.status === 409) {
+        if (window.confirm(msg + '\n\nCreate anyway?')) {
+          try {
+            await payrollRunAPI.create({ month: form.month, year: form.year, force: true });
+            toast.success('Payroll run created (force)');
+            setCreateDialog(false);
+            fetchRuns();
+          } catch (e2) { toast.error(e2.response?.data?.detail || 'Failed'); }
+        }
+      } else {
+        toast.error(msg);
+      }
+    }
   }
 
   async function openRun(runId) {
