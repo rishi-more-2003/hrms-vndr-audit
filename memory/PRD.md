@@ -13,6 +13,28 @@
 ### Phase 8A — P0 Payroll Completion
 Bonus / Gratuity / Incentive / Advance / Loan calculation engines, Payslip PDF, Monthly Payroll Run, FnF Settlement.
 
+### Phase 9 — Employee Profile v2 (Feb 21, 2026)
+
+**Backend endpoints** (all with admin RBAC):
+- `GET /employees/meta/last-code` — last created employee_code for manual-entry reference
+- `GET /employees/meta/bulk-upload-template` — returns CSV header, mandatory + unique fields list
+- `GET /employees/{id}/profile` — full profile dict (all 100+ fields, bypasses restrictive response model)
+- `POST /employees/profile` — flexible create with mandatory + uniqueness validation
+- `PUT /employees/{id}/profile` — flexible update
+- `PUT /employees/{id}/approval-hierarchy` — sets leave / attendance / overtime / reimbursement / payroll approvers + general_manager
+- `POST /employees/bulk-upload` — CSV-driven batch create with per-row pass/fail report
+- `GET/POST/DELETE /employees/{id}/documents` — employee documents (general / recruitment / payslip / kyc / statutory / other categories)
+
+**Uniqueness enforcement** across 13 fields (`employee_code, email, phone, pan, aadhaar, uan_no, pf_account_no, pension_account_no, edli_account_no, esic_account_no, lin_no, passport_no, driving_license_no`) — only checked against **active** employees; terminated/resigned/separated employees free up their identifiers for rejoiners.
+
+**Frontend**:
+- New `EmployeeProfileForm` component (12 tabs): Personal → Contact → Address → Employment → Salary & Bank → Statutory (PF/Pension/ESIC/PT/LWF + detailed sub-fields shown when members) → KYC/Identity → Voluntary PF/Pension → Previous Employment → Approval Hierarchy → Salary/Policy Assignment → Documents.
+- **"Last Employee ID" hint** visible top-right during new employee creation.
+- **CSV Template download** + **Bulk Upload** dialogs on EmployeesPage with per-row result display.
+- Conditional required fields: PF member → UAN/PF A/C, ESIC member → ESIC A/C.
+- "Same as correspondence address" toggle auto-copies fields.
+- Permanent backward compat: `EmployeeResponse` now has optional fields so legacy records + new flexible ones both list cleanly.
+
 ### Phase 8C — Seed Kit + Policy↔Salary Linkage (Feb 21, 2026)
 **Default Component Kit** (`POST /api/salary-components/seed-defaults`, idempotent):
 22 opinionated components showcasing Phase 8B features:

@@ -182,18 +182,18 @@ class EmployeeResponse(BaseModel):
     first_name: str
     last_name: str
     email: str
-    phone: str
-    date_of_birth: str
-    gender: str
-    address: str
-    department_id: str
-    designation_id: str
-    date_of_joining: str
+    phone: Optional[str] = ""
+    date_of_birth: Optional[str] = ""
+    gender: Optional[str] = ""
+    address: Optional[str] = ""
+    department_id: Optional[str] = ""
+    designation_id: Optional[str] = ""
+    date_of_joining: Optional[str] = ""
     reports_to: Optional[str] = None
-    employment_type: str
-    status: str
-    permissions: Dict[str, bool]
-    created_at: str
+    employment_type: Optional[str] = ""
+    status: Optional[str] = "active"
+    permissions: Optional[Dict[str, bool]] = None
+    created_at: Optional[str] = ""
 
 class PermissionsUpdate(BaseModel):
     permissions: Dict[str, bool]
@@ -619,6 +619,251 @@ async def update_employee_permissions(employee_id: str, body: PermissionsUpdate,
         raise HTTPException(status_code=404, detail="Employee not found")
     await db.employees.update_one({"id": employee_id}, {"$set": {"permissions": body.permissions}})
     return {"message": "Permissions updated successfully"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Employee Full Profile v2 — flexible schema with 100+ fields
+# ═══════════════════════════════════════════════════════════════════
+
+UNIQUE_EMPLOYEE_FIELDS = [
+    "employee_code", "email", "phone", "pan", "aadhaar",
+    "uan_no", "pf_account_no", "pension_account_no", "edli_account_no",
+    "esic_account_no", "lin_no", "passport_no", "driving_license_no",
+]
+
+MANDATORY_EMPLOYEE_FIELDS = [
+    "employee_code", "first_name", "last_name", "email",
+    "gender", "date_of_birth", "nationality",
+    "date_of_joining", "location_id", "designation_id", "department_id",
+    "employment_type", "phone", "salary_payment_mode",
+    "corr_address_line1", "corr_address_city", "corr_address_pincode",
+    "pan", "aadhaar",
+]
+
+
+async def _check_employee_uniqueness(data: dict, exclude_employee_id: str = None) -> list:
+    """Uniqueness across ACTIVE employees only. Rejoined employees can reuse IDs."""
+    violations = []
+    for field in UNIQUE_EMPLOYEE_FIELDS:
+        val = data.get(field)
+        if not val:
+            continue
+        query = {field: val, "status": {"$nin": ["terminated", "resigned", "separated"]}}
+        if exclude_employee_id:
+            query["id"] = {"$ne": exclude_employee_id}
+        existing = await db.employees.find_one(query, {"_id": 0, "id": 1, "employee_code": 1})
+        if existing:
+            violations.append({
+                "field": field, "value": val,
+                "conflicts_with_employee_id": existing.get("id"),
+                "conflicts_with_employee_code": existing.get("employee_code"),
+            })
+    return violations
+
+
+def _normalize_employee_payload(data: dict) -> dict:
+    out = {}
+    for k, v in data.items():
+        if isinstance(v, str):
+            v = v.strip()
+            if k == "email": v = v.lower()
+        out[k] = v
+    return out
+
+
+@api_router.get("/employees/meta/last-code")
+async def get_last_employee_code(current_user: dict = Depends(get_current_user)):
+    last = await db.employees.find({}, {"_id": 0, "employee_code": 1, "created_at": 1}).sort("created_at", -1).limit(1).to_list(1)
+    return {"last_code": last[0].get("employee_code") if last else None}
+
+
+@api_router.get("/employees/meta/bulk-upload-template")
+async def bulk_upload_template():
+    """CSV header row for bulk upload; admin can download, fill and re-upload."""
+    header = MANDATORY_EMPLOYEE_FIELDS + [
+        "middle_name", "marital_status", "working_nation", "blood_group",
+        "pf_member", "pension_member", "esic_member", "pt_applicable", "lwf_applicable",
+        "uan_no", "pf_account_no", "pension_account_no", "esic_account_no", "lin_no",
+        "salary_ac_bank", "salary_ac_no", "salary_ac_ifsc", "salary_ac_branch",
+        "perm_address_line1", "perm_address_city", "perm_address_pincode",
+        "passport_no", "driving_license_no", "grade_id", "role_id",
+    ]
+    return {"header": header, "mandatory": MANDATORY_EMPLOYEE_FIELDS, "unique": UNIQUE_EMPLOYEE_FIELDS}
+
+
+@api_router.get("/employees/{employee_id}/profile")
+async def get_employee_profile(employee_id: str, current_user: dict = Depends(get_current_user)):
+    """Return full employee dict (all profile fields, not just the restrictive response model)."""
+    emp = await db.employees.find_one({"id": employee_id}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if current_user["role"] != UserRole.ADMIN and current_user["id"] != emp.get("user_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return emp
+
+
+@api_router.post("/employees/profile")
+async def create_employee_profile(data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    data = _normalize_employee_payload(data)
+    missing = [f for f in MANDATORY_EMPLOYEE_FIELDS if not data.get(f)]
+    if missing:
+        raise HTTPException(status_code=400, detail={"message": "Missing mandatory fields", "fields": missing})
+    violations = await _check_employee_uniqueness(data)
+    if violations:
+        raise HTTPException(status_code=409, detail={"message": "Unique field conflict", "violations": violations})
+
+    existing_user = await db.users.find_one({"email": data["email"]}, {"_id": 0})
+    if existing_user:
+        user_id = existing_user["id"]
+    else:
+        user_id = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": user_id, "email": data["email"],
+            "password": hash_password(data.get("password") or "changeme123"),
+            "full_name": f'{data.get("first_name","")} {data.get("last_name","")}'.strip(),
+            "role": UserRole.EMPLOYEE, "permissions": DEFAULT_PERMISSIONS,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    emp_id = str(uuid.uuid4())
+    doc = dict(data)
+    doc.pop("password", None)
+    doc.update({
+        "id": emp_id, "user_id": user_id,
+        "status": data.get("status") or "active",
+        "permissions": DEFAULT_PERMISSIONS,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    await db.employees.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.put("/employees/{employee_id}/profile")
+async def update_employee_profile(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    existing = await db.employees.find_one({"id": employee_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    data = _normalize_employee_payload(data)
+    violations = await _check_employee_uniqueness(data, exclude_employee_id=employee_id)
+    if violations:
+        raise HTTPException(status_code=409, detail={"message": "Unique field conflict", "violations": violations})
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    for k in ("id", "user_id", "created_at", "_id"):
+        data.pop(k, None)
+    await db.employees.update_one({"id": employee_id}, {"$set": data})
+    return await db.employees.find_one({"id": employee_id}, {"_id": 0})
+
+
+@api_router.put("/employees/{employee_id}/approval-hierarchy")
+async def update_approval_hierarchy(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    allowed = {"leave_approver_id", "reimbursement_approver_id", "overtime_approver_id",
+               "attendance_approver_id", "payroll_approver_id", "general_manager_id"}
+    payload = {k: v for k, v in data.items() if k in allowed}
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.employees.update_one({"id": employee_id}, {"$set": payload})
+    return {"message": "Approval hierarchy updated", "set": payload}
+
+
+@api_router.post("/employees/bulk-upload")
+async def bulk_upload_employees(body: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    rows = body.get("rows") or []
+    continue_on_error = bool(body.get("continue_on_error", True))
+    results = []
+    for idx, row in enumerate(rows):
+        try:
+            data = _normalize_employee_payload(row)
+            missing = [f for f in MANDATORY_EMPLOYEE_FIELDS if not data.get(f)]
+            if missing:
+                raise ValueError(f"Missing: {missing}")
+            violations = await _check_employee_uniqueness(data)
+            if violations:
+                raise ValueError(f"Unique conflict: {[v['field'] for v in violations]}")
+
+            existing_user = await db.users.find_one({"email": data["email"]}, {"_id": 0})
+            user_id = existing_user["id"] if existing_user else str(uuid.uuid4())
+            if not existing_user:
+                await db.users.insert_one({
+                    "id": user_id, "email": data["email"],
+                    "password": hash_password(data.get("password") or "changeme123"),
+                    "full_name": f'{data.get("first_name","")} {data.get("last_name","")}'.strip(),
+                    "role": UserRole.EMPLOYEE, "permissions": DEFAULT_PERMISSIONS,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+            emp_id = str(uuid.uuid4())
+            doc = dict(data)
+            doc.pop("password", None)
+            doc.update({
+                "id": emp_id, "user_id": user_id,
+                "status": data.get("status") or "active",
+                "permissions": DEFAULT_PERMISSIONS,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await db.employees.insert_one(doc)
+            results.append({"row": idx, "success": True, "employee_id": emp_id, "employee_code": data.get("employee_code")})
+        except Exception as e:
+            results.append({"row": idx, "success": False, "error": str(e)})
+            if not continue_on_error:
+                break
+    return {
+        "total": len(rows),
+        "succeeded": sum(1 for r in results if r["success"]),
+        "failed": sum(1 for r in results if not r["success"]),
+        "results": results,
+    }
+
+
+@api_router.get("/employees/bulk-upload/template")
+async def bulk_upload_template_legacy():
+    """Deprecated — use /employees/meta/bulk-upload-template."""
+    header = MANDATORY_EMPLOYEE_FIELDS + [
+        "middle_name", "marital_status", "working_nation", "blood_group",
+        "pf_member", "pension_member", "esic_member", "pt_applicable", "lwf_applicable",
+    ]
+    return {"header": header, "mandatory": MANDATORY_EMPLOYEE_FIELDS, "unique": UNIQUE_EMPLOYEE_FIELDS}
+
+
+# ─── Employee Documents ───
+@api_router.get("/employees/{employee_id}/documents")
+async def list_employee_documents(employee_id: str, category: str = None, current_user: dict = Depends(get_current_user)):
+    emp = await db.employees.find_one({"id": employee_id}, {"_id": 0, "user_id": 1})
+    if current_user["role"] != UserRole.ADMIN:
+        if not emp or emp.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    q = {"employee_id": employee_id}
+    if category:
+        q["category"] = category
+    return await db.employee_documents.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+
+
+@api_router.post("/employees/{employee_id}/documents")
+async def add_employee_document(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "employee_id": employee_id,
+        "file_url": data.get("file_url"),
+        "file_name": data.get("file_name"),
+        "category": data.get("category", "general"),
+        "description": data.get("description", ""),
+        "expiry_date": data.get("expiry_date"),
+        "uploaded_by": current_user["id"],
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.employee_documents.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.delete("/employees/{employee_id}/documents/{doc_id}")
+async def delete_employee_document(employee_id: str, doc_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.employee_documents.delete_one({"id": doc_id, "employee_id": employee_id})
+    return {"message": "Document removed"}
+
 
 @api_router.put("/employees/{employee_id}/reports-to")
 async def update_reports_to(employee_id: str, reports_to: Optional[str] = None, current_user: dict = Depends(get_current_user)):
