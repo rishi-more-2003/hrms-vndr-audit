@@ -514,7 +514,7 @@ export default function SalaryStructurePage() {
                           <div className="w-28 truncate"><p className="text-xs font-medium">{c.name}</p><p className="text-[9px] text-[#A28B7A]">{c.code}</p></div>
                           <Select value={c.calc_type || 'fixed_amount'} onValueChange={function(v) { setTmplCompField(idx, 'calc_type', v); }} disabled={!c.enabled}>
                             <SelectTrigger className="h-7 w-28 text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>{CALC_TYPES.map(function(ct2) { return <SelectItem key={ct2} value={ct2} className="text-xs">{CALC_LABELS[ct2]}</SelectItem>; })}</SelectContent>
+                            <SelectContent>{(c.component_type === 'earning' ? CALC_TYPES_EARNING : CALC_TYPES_DED_PROV).map(function(ct2) { return <SelectItem key={ct2} value={ct2} className="text-xs">{CALC_LABELS[ct2]}</SelectItem>; })}</SelectContent>
                           </Select>
                           {c.calc_type === 'fixed_amount' ? (
                             <Input type="number" value={c.amount || ''} onChange={function(e) { setTmplCompField(idx, 'amount', parseFloat(e.target.value) || 0); }} className="h-7 w-24 text-xs" placeholder="Amount" disabled={!c.enabled} />
