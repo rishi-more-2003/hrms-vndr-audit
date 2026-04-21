@@ -42,7 +42,7 @@ const Layout = ({ children }) => {
     ] : [])),
     { name: 'Performance', path: '/performance', icon: ChartLine, module: 'performance' },
     { name: 'Onboarding', path: '/onboarding', icon: Rocket, module: 'onboarding' },
-  ].filter(item => isAdmin || hasPermission(item.module));
+  ].filter(item => isAdmin || item.module === 'my_profile' || hasPermission(item.module));
 
   const handleLogout = () => {
     logout();

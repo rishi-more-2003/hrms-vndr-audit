@@ -7,6 +7,8 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Switch } from '../components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { Textarea } from '../components/ui/textarea';
 
 var TABS = [
   { key: 'personal', label: 'Personal' },
@@ -36,6 +38,67 @@ var EMP_EDITABLE = new Set([
   'emergency_contact_relation',
 ]);
 
+// Protected fields grouped by tab — used by "Request Change" dialog to show a field picker.
+var PROTECTED_FIELDS_BY_TAB = {
+  employment: [
+    ['date_of_joining', 'Date of Joining'],
+    ['location_id', 'Location'],
+    ['department_id', 'Department'],
+    ['designation_id', 'Designation'],
+    ['grade_id', 'Grade'],
+    ['role', 'Role'],
+    ['employment_type', 'Employment Type'],
+    ['status', 'Employee Status'],
+  ],
+  salary_bank: [
+    ['salary_payment_mode', 'Salary Payment Mode'],
+    ['salary_ac_bank', 'Salary Bank'],
+    ['salary_ac_branch', 'Bank Branch'],
+    ['salary_ac_no', 'Salary A/C No.'],
+    ['salary_ac_ifsc', 'IFSC Code'],
+  ],
+  statutory: [
+    ['uan_no', 'UAN No.'],
+    ['pf_account_no', 'PF A/C No.'],
+    ['pension_account_no', 'Pension A/C No.'],
+    ['esic_account_no', 'ESIC A/C No.'],
+    ['pf_member', 'PF Member'],
+    ['esic_member', 'ESIC Member'],
+    ['pt_applicable', 'Professional Tax Applicable'],
+    ['lwf_applicable', 'LWF Applicable'],
+  ],
+  kyc: [
+    ['pan', 'PAN'],
+    ['aadhaar', 'Aadhaar'],
+    ['passport_no', 'Passport No.'],
+    ['passport_doe', 'Passport Expiry'],
+    ['driving_license_no', 'Driving License No.'],
+    ['name_as_per_aadhaar', 'Name as per Aadhaar'],
+    ['name_as_per_pan', 'Name as per PAN'],
+  ],
+  voluntary: [
+    ['voluntary_pf', 'Voluntary PF'],
+    ['voluntary_pf_rate', 'Voluntary PF Rate'],
+    ['voluntary_pension', 'Voluntary Pension'],
+    ['voluntary_pension_rate', 'Voluntary Pension Rate'],
+  ],
+  previous: [
+    ['prev_employer_name', 'Previous Employer Name'],
+    ['prev_employer_esic_code', 'Prev. Employer ESIC Code'],
+    ['prev_pf_ac_no', 'Prev. PF A/C No.'],
+    ['prev_uan_no', 'Prev. UAN No.'],
+    ['prev_esic_ac_no', 'Prev. ESIC A/C No.'],
+  ],
+  hierarchy: [
+    ['leave_approver_id', 'Leave Approver'],
+    ['attendance_approver_id', 'Attendance Approver'],
+    ['overtime_approver_id', 'Overtime Approver'],
+    ['reimbursement_approver_id', 'Reimbursement Approver'],
+    ['payroll_approver_id', 'Payroll Approver'],
+    ['general_manager_id', 'General Manager'],
+  ],
+};
+
 // Helper renderer — consistent compact field
 function Field({ label, required, children, hint }) {
   return (
@@ -62,6 +125,11 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
   var [effectivePolicies, setEffectivePolicies] = useState(null);
   var [policyTpls, setPolicyTpls] = useState({});
   var [loading, setLoading] = useState(false);
+  var [changeReqOpen, setChangeReqOpen] = useState(false);
+  var [crField, setCrField] = useState('');
+  var [crValue, setCrValue] = useState('');
+  var [crReason, setCrReason] = useState('');
+  var [crSubmitting, setCrSubmitting] = useState(false);
   var isEdit = !!employeeId || selfMode;
   var readOnlyAll = !!selfMode;  // in selfMode, most fields are read-only
   // Helper: can this field be edited right now?
@@ -180,6 +248,29 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
   async function deleteDoc(id) {
     if (!window.confirm('Delete document?')) return;
     try { await employeeAPI.deleteDocument(employeeId, id); setDocs(docs.filter(function(d) { return d.id !== id; })); } catch (e) { toast.error('Failed'); }
+  }
+
+  function openChangeRequest() {
+    var fields = PROTECTED_FIELDS_BY_TAB[tab] || [];
+    setCrField(fields.length ? fields[0][0] : '');
+    setCrValue('');
+    setCrReason('');
+    setChangeReqOpen(true);
+  }
+  async function submitChangeRequest() {
+    if (!crField) { toast.error('Please select a field'); return; }
+    if (crValue === '' || crValue === null || crValue === undefined) { toast.error('Please enter a new value'); return; }
+    setCrSubmitting(true);
+    try {
+      var payload = { changes: {}, reason: crReason || '' };
+      payload.changes[crField] = crValue;
+      await meAPI.createChangeRequest(payload);
+      toast.success('Change request submitted for admin approval');
+      setChangeReqOpen(false);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Failed to submit');
+    }
+    setCrSubmitting(false);
   }
 
   var emps = allEmployees || [];
@@ -309,6 +400,7 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
 
         {/* EMPLOYMENT */}
         {tab === 'employment' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <Field label="Date of Joining" required><Txt type="date" value={form.date_of_joining || ''} onChange={function(e) { f('date_of_joining', e.target.value); }} /></Field>
             <Field label="Location" required>
@@ -349,10 +441,12 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
               </Select>
             </Field>
           </div>
+          </fieldset>
         )}
 
         {/* SALARY & BANK */}
         {tab === 'salary_bank' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <Field label="Salary Payment Mode" required>
               <Select value={form.salary_payment_mode || 'bank'} onValueChange={function(v) { f('salary_payment_mode', v); }}>
@@ -365,10 +459,12 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
             <Field label="Salary A/C No."><Txt value={form.salary_ac_no || ''} onChange={function(e) { f('salary_ac_no', e.target.value); }} /></Field>
             <Field label="IFSC Code"><Txt value={form.salary_ac_ifsc || ''} onChange={function(e) { f('salary_ac_ifsc', e.target.value.toUpperCase()); }} /></Field>
           </div>
+          </fieldset>
         )}
 
         {/* STATUTORY */}
         {tab === 'statutory' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="space-y-4">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div className="flex items-center justify-between p-2 bg-[#F9F6F0] rounded-lg"><Label className="text-xs">PF Member</Label><Switch checked={!!form.pf_member} onCheckedChange={function(v) { f('pf_member', v); }} /></div>
@@ -427,10 +523,12 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
               </div>
             )}
           </div>
+          </fieldset>
         )}
 
         {/* KYC */}
         {tab === 'kyc' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <Field label="PAN" required hint="Unique"><Txt value={form.pan || ''} onChange={function(e) { f('pan', e.target.value.toUpperCase()); }} /></Field>
             <Field label="Aadhaar" required hint="Unique"><Txt value={form.aadhaar || ''} onChange={function(e) { f('aadhaar', e.target.value); }} /></Field>
@@ -446,10 +544,12 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
             <Field label="KYC Bank IFSC"><Txt value={form.kyc_bank_ifsc || ''} onChange={function(e) { f('kyc_bank_ifsc', e.target.value.toUpperCase()); }} /></Field>
             <div className="flex items-center justify-between p-2 bg-[#F9F6F0] rounded-lg"><Label className="text-xs">Bank KYC Done</Label><Switch checked={!!form.bank_kyc_done} onCheckedChange={function(v) { f('bank_kyc_done', v); }} /></div>
           </div>
+          </fieldset>
         )}
 
         {/* VOLUNTARY */}
         {tab === 'voluntary' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div className="flex items-center justify-between p-2 bg-[#F9F6F0] rounded-lg"><Label className="text-xs">Voluntary PF</Label><Switch checked={!!form.voluntary_pf} onCheckedChange={function(v) { f('voluntary_pf', v); }} /></div>
             {form.voluntary_pf && <>
@@ -472,10 +572,12 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
               <Field label="Voluntary Pension Rate"><Txt type="number" value={form.voluntary_pension_rate || ''} onChange={function(e) { f('voluntary_pension_rate', parseFloat(e.target.value) || 0); }} /></Field>
             </>}
           </div>
+          </fieldset>
         )}
 
         {/* PREVIOUS EMP */}
         {tab === 'previous' && (
+          <fieldset disabled={selfMode} className="border-0 p-0 m-0 disabled:opacity-90">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <Field label="Previous Employer Name"><Txt value={form.prev_employer_name || ''} onChange={function(e) { f('prev_employer_name', e.target.value); }} /></Field>
             <Field label="Prev. Employer ESIC Code"><Txt value={form.prev_employer_esic_code || ''} onChange={function(e) { f('prev_employer_esic_code', e.target.value); }} /></Field>
@@ -488,6 +590,7 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
             <Field label="Prev. DOL Pension"><Txt type="date" value={form.prev_dol_pension || ''} onChange={function(e) { f('prev_dol_pension', e.target.value); }} /></Field>
             <Field label="Prev. UAN No."><Txt value={form.prev_uan_no || ''} onChange={function(e) { f('prev_uan_no', e.target.value); }} /></Field>
           </div>
+          </fieldset>
         )}
 
         {/* POLICIES */}
@@ -625,17 +728,7 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
       <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E8E2D9]">
         <Button variant="outline" onClick={onClose}><X size={14} className="mr-1" /> Cancel</Button>
         {selfMode && ['employment','salary_bank','statutory','kyc','voluntary','previous','hierarchy'].indexOf(tab) >= 0 && (
-          <Button variant="outline" onClick={async function() {
-            var field = window.prompt('Field to request change (e.g. phone, salary_ac_no, pan):');
-            if (!field) return;
-            var val = window.prompt('New value:');
-            if (val === null) return;
-            var reason = window.prompt('Reason (optional):') || '';
-            try {
-              await meAPI.createChangeRequest({ changes: { [field]: val }, reason: reason });
-              toast.success('Change request submitted for admin approval');
-            } catch (e) { toast.error(e.response?.data?.detail || 'Failed'); }
-          }} className="text-[#A28B7A]" data-testid="request-change-btn"><Lock size={12} className="mr-1" /> Request Change</Button>
+          <Button variant="outline" onClick={openChangeRequest} className="text-[#A28B7A]" data-testid="request-change-btn"><Lock size={12} className="mr-1" /> Request Change</Button>
         )}
         {['personal','contact','address','policies','documents'].indexOf(tab) === -1 && isEdit && !selfMode && null}
         {((!selfMode && ['personal','contact','address','employment','salary_bank','statutory','kyc','voluntary','previous'].indexOf(tab) >= 0) ||
@@ -643,6 +736,38 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
           <Button onClick={save} disabled={loading} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="save-profile"><FloppyDisk size={14} className="mr-1" /> {isEdit ? (selfMode ? 'Save My Changes' : 'Update Employee') : 'Create Employee'}</Button>
         )}
       </div>
+
+      {/* Request Change Dialog */}
+      <Dialog open={changeReqOpen} onOpenChange={setChangeReqOpen}>
+        <DialogContent className="sm:max-w-md" data-testid="request-change-dialog">
+          <DialogHeader>
+            <DialogTitle>Request a Change</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-[#A28B7A]">Select the field you'd like changed. HR will review and approve/reject your request.</p>
+            <Field label="Field">
+              <Select value={crField} onValueChange={setCrField}>
+                <SelectTrigger className="h-9" data-testid="cr-field-select"><SelectValue placeholder="Select field" /></SelectTrigger>
+                <SelectContent>
+                  {(PROTECTED_FIELDS_BY_TAB[tab] || []).map(function(pair) {
+                    return <SelectItem key={pair[0]} value={pair[0]}>{pair[1]}</SelectItem>;
+                  })}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="New Value">
+              <Txt value={crValue} onChange={function(e) { setCrValue(e.target.value); }} data-testid="cr-value-input" placeholder="Enter the corrected value" />
+            </Field>
+            <Field label="Reason (optional)">
+              <Textarea value={crReason} onChange={function(e) { setCrReason(e.target.value); }} data-testid="cr-reason-input" placeholder="Why do you need this changed?" className="text-sm min-h-[72px]" />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={function() { setChangeReqOpen(false); }} data-testid="cr-cancel">Cancel</Button>
+            <Button onClick={submitChangeRequest} disabled={crSubmitting} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="cr-submit">Submit Request</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

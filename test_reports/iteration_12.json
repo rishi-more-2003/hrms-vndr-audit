@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 12: Verified all 3 frontend bugs from iteration_11 are FIXED. Fix1 (nav-my-profile) PASS for both employee@hrms.com and priya@hrms.com — sidebar link visible and click navigates to /my-profile. Fix2 (fieldset[disabled] cascade) PASS — every locked tab (employment/salary_bank/statutory/kyc/voluntary/previous) is wrapped in <fieldset disabled>, and all form controls inside match :disabled pseudo-class via HTML5 cascade. Playwright.fill() times out on locked inputs confirming they are truly non-interactive. Editable tabs (personal/contact/address) remain editable (0 visible fieldset[disabled], inputs enabled). Fix3 (Dialog) PASS — clicking [data-testid=request-change-btn] opens shadcn Dialog (data-testid=request-change-dialog) with cr-field-select (5 options), cr-value-input, cr-reason-input, cr-submit; submitting posts /api/employees/me/profile/request-change, shows toast 'Change request submitted for admin approval', and new PENDING CR appears in My Change Requests list ('salary_payment_mode → TESTXYZ123'). ZERO window.prompt dialogs triggered. Regression: Admin view of EmployeeProfileForm (/employees → Profile) has 0 fieldset[disabled] — fully editable as expected. Backend pytest skipped per review-request instructions (no backend changes).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Fix1: nav-my-profile visible & clickable for employee@hrms.com -> navigates to /my-profile",
+    "Fix1: nav-my-profile visible for priya@hrms.com",
+    "Fix2: employment tab -> fieldset[disabled]=1, 8/8 controls :disabled (PASS)",
+    "Fix2: salary_bank tab -> fieldset[disabled]=1, 5/5 controls :disabled (PASS)",
+    "Fix2: kyc tab -> fieldset[disabled]=1, 10/10 controls :disabled (PASS)",
+    "Fix2: previous tab -> fieldset[disabled]=1, 10/10 controls :disabled (PASS)",
+    "Fix2: statutory tab -> fieldset[disabled]=1 present (content is Radix Switch toggles which inherit disabled from fieldset)",
+    "Fix2: voluntary tab -> fieldset[disabled]=1 present (Radix Switch toggles, inherit disabled)",
+    "Fix2: Playwright.fill() on locked input times out — HTML5 disabled cascade actually blocks user input",
+    "Fix2: personal/contact/address tabs have 0 visible fieldset[disabled]; 7/3/10 enabled inputs respectively",
+    "Fix3: request-change-dialog opens on button click (visible=true)",
+    "Fix3: All 4 required data-testids present: cr-field-select, cr-value-input, cr-reason-input, cr-submit",
+    "Fix3: cr-field-select populates with 5 protected-field options for salary_bank tab",
+    "Fix3: submitting the dialog triggers success toast 'Change request submitted for admin approval'",
+    "Fix3: New CR 'salary_payment_mode -> TESTXYZ123' appears in 'My Change Requests' list (proves POST /api/employees/me/profile/request-change fired successfully)",
+    "Fix3: ZERO window.prompt/alert dialogs triggered during entire flow",
+    "Regression: Admin view of EmployeeProfileForm via /employees -> Edit -> 0 fieldset[disabled] found (no selfMode lock)"
+  ],
+  "test_report_links": [
+    "/app/test_reports/iteration_11.json (previous)",
+    "/app/backend/tests/test_employee_selfservice.py (22/22 from previous run)",
+    "/app/backend/tests/test_selfservice_security.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "EmployeeProfileForm.js is ~700+ lines now with Dialog + tab bodies + handlers inline — consider splitting tab bodies into per-tab components for maintainability (non-blocking).",
+    "Statutory & Voluntary tabs use Radix Switch (role='switch' buttons) and don't include traditional input elements — the fieldset[disabled] wrap still cascades disabled state to them per HTML5. No bug; just worth a unit test to confirm Switch.disabled=true in selfMode."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% — all 3 previously-flagged bugs fixed, admin regression clean"},
+  "test_credentials": "admin@hrms.com/admin123, employee@hrms.com/emp123, priya@hrms.com/priya123 (source: /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 1 new PENDING change_request during test: salary_payment_mode -> TESTXYZ123 (reason: Automated testing of change request flow) for employee@hrms.com. Previous seeded CRs (RAHUL5555X pending, APRVD1234X approved, REJECT999X rejected, QUEUE1234X pending) still present — no cleanup done, harmless for future runs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 10 Employee Self-Service is now FULLY WORKING end-to-end. Backend 22/22 pytest from iterations 10-11 still applicable. Frontend: sidebar nav, fieldset[disabled] cascade on all 6 locked tabs, Dialog-based Request Change flow with full data-testid coverage — all verified. For future iterations, a new pending CR exists on employee@hrms.com (salary_payment_mode=TESTXYZ123); admin can approve/reject it via admin UI if they want to test admin-queue flow. IMPORTANT testing note: DO NOT use input.disabled property alone to verify fieldset[disabled] cascade — HTMLInputElement.disabled only reflects the attribute on the element itself. Must use input.matches(':disabled') which correctly returns true for controls inside fieldset[disabled] per HTML5 spec. Alternative: playwright's .fill() or .type() will time out on truly-disabled inputs which is functional proof.",
+  "rca of the issue": "Not applicable — this iteration is verification-only. All 3 bugs from iteration_11 root-caused and fixed by main agent: (1) Layout.js filter bypass added for item.module==='my_profile' so sidebar link renders without granular permission seed. (2) Each locked tab body wrapped in <fieldset disabled={selfMode}> to leverage HTML5 auto-cascade — no need to wire disabled on every individual control. (3) window.prompt trio replaced with shadcn Dialog + Select/Input/Textarea; PROTECTED_FIELDS_BY_TAB map drives the Select options so user picks from current tab's protected fields. All fixes match the diagnosis in iteration_11's context_for_next_testing_agent."
+}
