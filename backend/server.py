@@ -1987,21 +1987,150 @@ def _eval_tds_monthly(annual_taxable_income: float, tds_template: dict = None) -
     return calculate_income_tax(annual_taxable_income)["monthly_tds"]
 
 
-# Salary Calculator - compute salary from template (Indian Labour Law compliant)
+# ══════════════════════════════════════════════════════════════════════════════
+#  SALARY COMPUTE ENGINE v2 — Rate vs Earned salary, Applicability, Slabs,
+#  Group/Inclusion/Exclusion/Club-based calculations, Bonus-attracts matrix.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _match_slab_params(slab: dict, emp: dict, salary_for_slab: float) -> bool:
+    """Check if slab parameters match the employee + salary basis."""
+    # gender
+    g = (slab.get("gender") or "any").lower()
+    if g not in ("any", ""):
+        if (emp.get("gender") or "").lower() != g:
+            return False
+    # age range
+    min_age = slab.get("min_age"); max_age = slab.get("max_age")
+    age = emp.get("age")
+    if min_age is not None and age is not None and age < float(min_age): return False
+    if max_age is not None and age is not None and age > float(max_age): return False
+    # employee category
+    cat = slab.get("employee_category")
+    if cat and cat != "any":
+        if (emp.get("category") or "") != cat: return False
+    # salary range (from/to against salary_for_slab)
+    s_from = slab.get("salary_from"); s_to = slab.get("salary_to")
+    if s_from is not None and salary_for_slab < float(s_from or 0): return False
+    if s_to is not None and s_to not in ("", "inf") and salary_for_slab > float(s_to): return False
+    return True
+
+
+def _pick_slab(slabs: list, emp: dict, salary_for_slab: float) -> dict:
+    for s in (slabs or []):
+        if _match_slab_params(s, emp, salary_for_slab):
+            return s
+    return None
+
+
+def _applicability_passes(comp: dict, rate_baskets: dict, earned_baskets: dict) -> (bool, str):
+    """Evaluate applicability filter. Returns (passes, reason)."""
+    a = comp.get("applicability") or {}
+    if not a or not a.get("enabled"):
+        return True, ""
+    basis = a.get("basis", "gross")          # gross | inclusion | exclusion | ctc | group:<name> | club
+    basis_mode = a.get("basis_mode", "rate") # rate | earned
+    op = a.get("operator", "greater_than_equal")
+    val_min = a.get("value_min"); val_max = a.get("value_max")
+    pool = rate_baskets if basis_mode == "rate" else earned_baskets
+    val = 0.0
+    if basis == "gross": val = pool["gross"]
+    elif basis == "inclusion": val = pool["inclusion"]
+    elif basis == "exclusion": val = pool["exclusion"]
+    elif basis == "ctc": val = pool["ctc"] if pool.get("ctc") else pool["gross"]
+    elif basis == "basic": val = pool.get("basic", 0)
+    elif basis.startswith("group:"):
+        grp = basis.split(":", 1)[1]
+        val = pool["by_group"].get(grp, 0)
+    elif basis == "club":
+        sources = a.get("sources") or []
+        val = sum(pool["by_code"].get(c, 0) for c in sources)
+
+    if op in ("less_than", "<"):
+        passes = val_min is None or val < float(val_min)
+    elif op in ("less_than_equal", "<="):
+        passes = val_min is None or val <= float(val_min)
+    elif op in ("greater_than", ">"):
+        passes = val_min is None or val > float(val_min)
+    elif op in ("greater_than_equal", ">="):
+        passes = val_min is None or val >= float(val_min)
+    elif op == "between":
+        lo = float(val_min or 0); hi = float(val_max or 1e18)
+        passes = lo <= val <= hi
+    else:
+        passes = True
+    reason = "" if passes else f"applicability {basis}({basis_mode})={val:.2f} {op} {val_min}/{val_max} failed"
+    return passes, reason
+
+
+def _compute_amount_from_spec(calc_type: str, percentage: float, fixed_amount: float,
+                              pool_rate: dict, pool_earned: dict, basis_mode: str = "earned",
+                              calc_sources: list = None) -> float:
+    """Compute a component's amount using pool (rate or earned) as basis."""
+    pool = pool_rate if basis_mode == "rate" else pool_earned
+    if calc_type == "fixed_amount":
+        return float(fixed_amount or 0)
+    p = float(percentage or 0) / 100
+    if calc_type == "percentage_of_basic":   return round(pool.get("basic", 0) * p, 2)
+    if calc_type == "percentage_of_gross":   return round(pool.get("gross", 0) * p, 2)
+    if calc_type == "percentage_of_ctc":     return round(pool.get("ctc", pool.get("gross", 0)) * p, 2)
+    if calc_type == "percentage_of_inclusion": return round(pool.get("inclusion", 0) * p, 2)
+    if calc_type == "percentage_of_exclusion": return round(pool.get("exclusion", 0) * p, 2)
+    if calc_type.startswith("percentage_of_group:"):
+        grp = calc_type.split(":", 1)[1]
+        return round(pool.get("by_group", {}).get(grp, 0) * p, 2)
+    if calc_type == "percentage_of_club":
+        base = sum(pool.get("by_code", {}).get(c, 0) for c in (calc_sources or []))
+        return round(base * p, 2)
+    return 0.0
+
+
+def _build_pool(earnings_list: list) -> dict:
+    """Aggregate earnings into buckets for formula bases."""
+    pool = {"gross": 0.0, "inclusion": 0.0, "exclusion": 0.0, "basic": 0.0,
+            "by_group": {}, "by_code": {}}
+    for e in earnings_list:
+        amt = float(e.get("amount") or 0)
+        pool["gross"] += amt
+        if e.get("classification") == "inclusion_wages":
+            pool["inclusion"] += amt
+        elif e.get("classification") == "exclusion":
+            pool["exclusion"] += amt
+        if (e.get("code") or "").upper() == "BASIC":
+            pool["basic"] += amt
+        grp = e.get("group")
+        if grp:
+            pool["by_group"][grp] = pool["by_group"].get(grp, 0) + amt
+        code = e.get("code")
+        if code:
+            pool["by_code"][code] = pool["by_code"].get(code, 0) + amt
+    return pool
+
+
+# Salary Calculator - compute salary from template (Indian Labour Law compliant, Rate/Earned aware)
 @api_router.post("/salary-compute")
 async def compute_salary(data: dict, current_user: dict = Depends(get_current_user)):
     """
     Compute salary breakdown. Returns per-component computed amounts + totals.
-    Supports:
-      - fixed_amount, percentage_of_basic, percentage_of_gross, percentage_of_ctc
-      - Statutory overrides via compliance template IDs (PF/ESIC/PT/LWF/TDS)
-      - PF wage ceiling (₹15,000), ESIC threshold (₹21,000)
-      - New Regime TDS slabs (2024-25) with rebate u/s 87A
+    v2 capabilities:
+      - Rate vs Earned: `rate_days` (scheduled), `earned_days` (actual worked) → pro-rata.
+      - Each component can choose `applicability_basis_mode` (rate|earned) and `calc_basis_mode` (rate|earned).
+      - Calc types: fixed_amount, percentage_of_basic, percentage_of_gross, percentage_of_ctc,
+        percentage_of_inclusion, percentage_of_exclusion, percentage_of_group:<name>, percentage_of_club.
+      - Applicability filter (skip component if salary outside range).
+      - Slab-based deductions/provisions (gender, age, category, salary-range parameters).
+      - Statutory auto-calc for PF (₹15k cap), ESIC (₹21k threshold), PT/LWF template slabs, TDS (New Regime 2024-25).
+      - Attendance-dependent flag: if False, component is NOT pro-rated (e.g. one-time bonus).
     """
     components = data.get("components", [])
     pay_type = data.get("pay_type", "monthly")
     ctc_annual_override = float(data.get("ctc_annual") or 0)
     use_statutory_auto = bool(data.get("use_statutory_auto", True))
+    emp = data.get("employee") or {}  # {gender, age, category, ...}
+
+    rate_days = float(data.get("rate_days") or 30)
+    earned_days = data.get("earned_days")
+    earned_days = float(earned_days) if earned_days is not None else rate_days
+    attendance_factor = (earned_days / rate_days) if rate_days else 1.0
 
     # Fetch assigned compliance templates if passed (for accurate slab-based calc)
     async def _get_tpl(col_key: str, tid: str):
@@ -2018,102 +2147,174 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
     lwf_tpl  = await _get_tpl("lwf", data.get("lwf_template_id"))
     tds_tpl  = await _get_tpl("tds", data.get("tds_template_id"))
 
-    # ── Phase 1: Identify basic and compute deterministic earnings ──
-    def _is_enabled(c):
-        return c.get("enabled") is not False
+    def _is_enabled(c): return c.get("enabled") is not False
 
-    def _find_basic(comps):
-        for c in comps:
-            if not _is_enabled(c) or c.get("component_type") != "earning":
-                continue
-            code = (c.get("code") or "").upper()
-            name = (c.get("name") or "").lower()
-            if code == "BASIC" or code.startswith("BASIC_") or (code == "" and "basic" in name):
-                return c
-        return None
-
-    basic_comp = _find_basic(components)
-    basic_amount = 0.0
-    if basic_comp:
-        if basic_comp.get("calc_type") == "fixed_amount":
-            basic_amount = float(basic_comp.get("amount") or 0)
-        elif basic_comp.get("calc_type") == "percentage_of_ctc" and ctc_annual_override > 0:
-            basic_amount = round((ctc_annual_override / 12) * float(basic_comp.get("percentage") or 0) / 100, 2)
-
-    # ── Phase 2: Compute earnings ──
-    # Pass 1: fixed + % of basic (derive deterministic subtotal)
-    earnings_breakdown = []
-    for c in components:
-        if not _is_enabled(c) or c.get("component_type") != "earning":
-            continue
+    # ── Phase 1: Compute RATE amounts for all earnings (multi-pass for dependencies) ──
+    earnings = [c for c in components if _is_enabled(c) and c.get("component_type") == "earning"]
+    # Initialize rate_amounts
+    for c in earnings:
+        c["_rate_amount"] = None
+    # Pass 1: fixed_amount
+    for c in earnings:
+        if c.get("calc_type") == "fixed_amount":
+            c["_rate_amount"] = float(c.get("amount") or 0)
+    # Derive basic from BASIC code
+    basic_rate = sum(c.get("_rate_amount", 0) or 0 for c in earnings if (c.get("code") or "").upper() == "BASIC")
+    pool_rate = {"gross": 0, "inclusion": 0, "exclusion": 0, "basic": basic_rate,
+                 "ctc": ctc_annual_override / 12 if ctc_annual_override else 0,
+                 "by_group": {}, "by_code": {}}
+    # Pass 2: % of basic / % of CTC
+    for c in earnings:
+        if c["_rate_amount"] is not None: continue
         ct = c.get("calc_type", "fixed_amount")
-        if ct == "fixed_amount":
-            amt = float(c.get("amount") or 0)
-        elif ct == "percentage_of_basic":
-            amt = round(basic_amount * float(c.get("percentage") or 0) / 100, 2)
-        elif ct == "percentage_of_ctc" and ctc_annual_override > 0:
-            amt = round((ctc_annual_override / 12) * float(c.get("percentage") or 0) / 100, 2)
-        else:
-            amt = None  # to be filled in pass 2
+        if ct in ("percentage_of_basic", "percentage_of_ctc"):
+            c["_rate_amount"] = _compute_amount_from_spec(ct, c.get("percentage"), c.get("amount"),
+                                                          pool_rate, pool_rate, "rate")
+    # Build partial pool after pass 2 for % of group/club/inclusion/exclusion basing
+    for c in earnings:
+        amt = c.get("_rate_amount") or 0
+        if amt:
+            pool_rate["gross"] += amt
+            if c.get("classification") == "inclusion_wages": pool_rate["inclusion"] += amt
+            elif c.get("classification") == "exclusion": pool_rate["exclusion"] += amt
+            grp = c.get("group")
+            if grp: pool_rate["by_group"][grp] = pool_rate["by_group"].get(grp, 0) + amt
+            code = c.get("code")
+            if code: pool_rate["by_code"][code] = pool_rate["by_code"].get(code, 0) + amt
+    # Pass 3: % of group / % of inclusion / % of exclusion / % of club / % of gross
+    for c in earnings:
+        if c["_rate_amount"] is not None: continue
+        ct = c.get("calc_type", "fixed_amount")
+        c["_rate_amount"] = _compute_amount_from_spec(ct, c.get("percentage"), c.get("amount"),
+                                                      pool_rate, pool_rate, "rate",
+                                                      c.get("calc_sources"))
+    # Rebuild full pool (all earnings now have rate amounts)
+    pool_rate = {"gross": 0, "inclusion": 0, "exclusion": 0, "basic": basic_rate,
+                 "ctc": ctc_annual_override / 12 if ctc_annual_override else 0,
+                 "by_group": {}, "by_code": {}}
+    for c in earnings:
+        amt = c.get("_rate_amount") or 0
+        pool_rate["gross"] += amt
+        if c.get("classification") == "inclusion_wages": pool_rate["inclusion"] += amt
+        elif c.get("classification") == "exclusion": pool_rate["exclusion"] += amt
+        grp = c.get("group")
+        if grp: pool_rate["by_group"][grp] = pool_rate["by_group"].get(grp, 0) + amt
+        code = c.get("code")
+        if code: pool_rate["by_code"][code] = pool_rate["by_code"].get(code, 0) + amt
+
+    # ── Phase 2: EARNED amounts (pro-rated for attendance unless attendance_dependent=False) ──
+    earnings_breakdown = []
+    for c in earnings:
+        rate_amt = c.get("_rate_amount") or 0
+        pro_rate = attendance_factor if c.get("attendance_dependent", True) else 1.0
+        earned_amt = round(rate_amt * pro_rate, 2)
         earnings_breakdown.append({
             "component_id": c.get("component_id") or c.get("id"),
             "code": c.get("code"), "name": c.get("name"),
-            "calc_type": ct, "percentage": float(c.get("percentage") or 0),
+            "group": c.get("group"),
+            "calc_type": c.get("calc_type", "fixed_amount"),
+            "percentage": float(c.get("percentage") or 0),
             "classification": c.get("classification", "inclusion_wages"),
             "attracts_pf": bool(c.get("attracts_pf")),
             "attracts_esic": bool(c.get("attracts_esic")),
             "attracts_pt": bool(c.get("attracts_pt")),
+            "attracts_lwf": bool(c.get("attracts_lwf")),
             "attracts_tds": bool(c.get("attracts_tds")),
+            "attracts_bonus": bool(c.get("attracts_bonus")),
+            "attendance_dependent": c.get("attendance_dependent", True),
             "is_statutory_computed": False,
-            "amount": amt,
+            "rate_amount": round(rate_amt, 2),
+            "amount": earned_amt,  # earned amount is the primary reported number
         })
 
-    subtotal_before_gross_pct = sum(e["amount"] for e in earnings_breakdown if e["amount"] is not None)
-    # Pass 2: % of gross (only earnings)
-    for e in earnings_breakdown:
-        if e["amount"] is None and e["calc_type"] == "percentage_of_gross":
-            e["amount"] = round(subtotal_before_gross_pct * e["percentage"] / 100, 2)
-    for e in earnings_breakdown:
-        if e["amount"] is None:
-            e["amount"] = 0.0
+    # Pools (rate & earned) for deduction/provision calcs
+    pool_earned = _build_pool(earnings_breakdown)
+    pool_earned["basic"] = sum(e["amount"] for e in earnings_breakdown if (e.get("code") or "").upper() == "BASIC")
+    pool_earned["ctc"] = ctc_annual_override / 12 if ctc_annual_override else 0
 
-    gross_monthly = round(sum(e["amount"] for e in earnings_breakdown), 2)
-    pf_wages = round(sum(e["amount"] for e in earnings_breakdown if e["attracts_pf"]), 2)
-    # PF wages are typically basic (+DA if basic itself is zero). Fallback to basic_amount.
-    if pf_wages == 0 and basic_amount > 0:
-        pf_wages = basic_amount
+    gross_monthly = round(pool_earned["gross"], 2)
+    gross_rate = round(pool_rate["gross"], 2)
 
-    # ── Phase 3: Compute deductions & provisions ──
+    # PF wages — use rate for applicability, earned for computation (per user's spec)
+    pf_wages_rate = round(sum(e["rate_amount"] for e in earnings_breakdown if e["attracts_pf"]), 2)
+    pf_wages_earned = round(sum(e["amount"] for e in earnings_breakdown if e["attracts_pf"]), 2)
+    if pf_wages_rate == 0 and basic_rate > 0:
+        pf_wages_rate = basic_rate
+        pf_wages_earned = pool_earned["basic"]
+
+    # ── Phase 3: Deductions & Provisions ──
     deductions_breakdown = []
     provisions_breakdown = []
+    skipped_components = []
 
-    # User-provided deductions (fixed or %-based)
     for c in components:
         if not _is_enabled(c) or c.get("component_type") not in ("deduction", "provision"):
             continue
-        # Skip statutory ones here; computed authoritatively below.
-        # Only skip when the component is explicitly flagged as statutory OR has a valid auto_pair_key.
         ak = (c.get("auto_pair_key") or "").lower()
-        is_stat_user = bool(c.get("is_statutory")) or ak in ("pf", "esic", "lwf")
-        if use_statutory_auto and is_stat_user:
+        # Skip statutory auto ones; computed below
+        if use_statutory_auto and ak in ("pf", "esic", "lwf"):
             continue
-        ct = c.get("calc_type", "fixed_amount")
-        if ct == "fixed_amount":
-            amt = float(c.get("amount") or 0)
-        elif ct == "percentage_of_basic":
-            amt = round(basic_amount * float(c.get("percentage") or 0) / 100, 2)
-        elif ct == "percentage_of_gross":
-            amt = round(gross_monthly * float(c.get("percentage") or 0) / 100, 2)
-        elif ct == "percentage_of_ctc" and ctc_annual_override > 0:
-            amt = round((ctc_annual_override / 12) * float(c.get("percentage") or 0) / 100, 2)
+
+        # Applicability
+        passes, reason = _applicability_passes(c, pool_rate, pool_earned)
+        if not passes:
+            skipped_components.append({"code": c.get("code"), "name": c.get("name"),
+                                       "type": c.get("component_type"), "reason": reason})
+            continue
+
+        # Slab or direct calc
+        calc_basis = c.get("calc_basis_mode", "earned")   # rate|earned
+        app_basis = c.get("applicability_basis_mode", "rate")  # rate|earned for slab-salary basis
+
+        amount = 0.0
+        slab_applied = None
+        if c.get("has_slabs") and (c.get("slabs") or []):
+            # Determine salary value for slab matching
+            slab_salary_basis = (c.get("slab_salary_basis") or "gross")
+            basis_pool = pool_rate if app_basis == "rate" else pool_earned
+            if slab_salary_basis == "gross": slab_salary = basis_pool.get("gross", 0)
+            elif slab_salary_basis == "inclusion": slab_salary = basis_pool.get("inclusion", 0)
+            elif slab_salary_basis == "exclusion": slab_salary = basis_pool.get("exclusion", 0)
+            elif slab_salary_basis == "basic": slab_salary = basis_pool.get("basic", 0)
+            elif slab_salary_basis == "ctc": slab_salary = basis_pool.get("ctc", basis_pool.get("gross", 0))
+            elif slab_salary_basis.startswith("group:"):
+                slab_salary = basis_pool.get("by_group", {}).get(slab_salary_basis.split(":", 1)[1], 0)
+            else: slab_salary = basis_pool.get("gross", 0)
+
+            slab = _pick_slab(c["slabs"], emp, slab_salary)
+            if slab:
+                slab_applied = slab
+                if slab.get("fixed_amount") is not None and slab.get("fixed_amount") != "":
+                    amount = float(slab["fixed_amount"])
+                elif slab.get("rate_pct") is not None:
+                    # Rate% of calc-basis pool
+                    calc_pool = pool_rate if calc_basis == "rate" else pool_earned
+                    calc_on = slab.get("rate_on", slab_salary_basis)
+                    if calc_on == "gross": base = calc_pool.get("gross", 0)
+                    elif calc_on == "inclusion": base = calc_pool.get("inclusion", 0)
+                    elif calc_on == "basic": base = calc_pool.get("basic", 0)
+                    elif calc_on.startswith("group:"): base = calc_pool.get("by_group", {}).get(calc_on.split(":", 1)[1], 0)
+                    else: base = slab_salary
+                    amount = round(base * float(slab["rate_pct"]) / 100, 2)
         else:
-            amt = 0.0
+            # Regular calc
+            amount = _compute_amount_from_spec(
+                c.get("calc_type", "fixed_amount"),
+                c.get("percentage"), c.get("amount"),
+                pool_rate, pool_earned, calc_basis, c.get("calc_sources"),
+            )
+
         entry = {
             "component_id": c.get("component_id") or c.get("id"),
             "code": c.get("code"), "name": c.get("name"),
-            "calc_type": ct, "percentage": float(c.get("percentage") or 0),
+            "group": c.get("group"),
+            "calc_type": c.get("calc_type", "fixed_amount"),
+            "percentage": float(c.get("percentage") or 0),
+            "calc_basis_mode": calc_basis,
+            "applicability_basis_mode": app_basis,
+            "slab_applied": slab_applied,
             "is_statutory_computed": False,
-            "amount": amt,
+            "amount": round(amount, 2),
         }
         if c.get("component_type") == "deduction":
             deductions_breakdown.append(entry)
@@ -2123,19 +2324,22 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
     # ── Phase 3b: Statutory authoritative computation (if enabled) ──
     statutory = {}
     if use_statutory_auto:
-        # PF: employee 12% of min(pf_wages, 15000)
-        pf_base = min(pf_wages, PF_WAGE_CEILING)
+        # PF: applicability on Rate PF wages; computation on Earned PF wages
         pf_emp_rate = float((pf_tpl or {}).get("employee_rate", PF_EMPLOYEE_RATE * 100)) / 100
         pf_er_rate  = float((pf_tpl or {}).get("employer_rate", PF_EMPLOYER_RATE * 100)) / 100
         pf_admin    = float((pf_tpl or {}).get("admin_rate", PF_ADMIN_RATE * 100)) / 100
         pf_edli     = float((pf_tpl or {}).get("edli_rate", PF_EDLI_RATE * 100)) / 100
         pf_cap_applies = (pf_tpl or {}).get("apply_wage_ceiling", True)
-        base_for_pf = pf_base if pf_cap_applies else pf_wages
 
-        pf_employee  = round(base_for_pf * pf_emp_rate, 2) if pf_wages > 0 else 0
-        pf_employer  = round(base_for_pf * pf_er_rate, 2) if pf_wages > 0 else 0
-        pf_admin_amt = round(base_for_pf * pf_admin, 2) if pf_wages > 0 else 0
-        pf_edli_amt  = round(base_for_pf * pf_edli, 2) if pf_wages > 0 else 0
+        # Applicability by Rate — if rate PF wages > ceiling and template says apply cap, use ceiling
+        pf_base_rate = min(pf_wages_rate, PF_WAGE_CEILING) if pf_cap_applies else pf_wages_rate
+        # Computation: apply attendance factor to the capped base
+        pf_base_earned = round(pf_base_rate * attendance_factor, 2)
+
+        pf_employee  = round(pf_base_earned * pf_emp_rate, 2) if pf_wages_rate > 0 else 0
+        pf_employer  = round(pf_base_earned * pf_er_rate, 2) if pf_wages_rate > 0 else 0
+        pf_admin_amt = round(pf_base_earned * pf_admin, 2) if pf_wages_rate > 0 else 0
+        pf_edli_amt  = round(pf_base_earned * pf_edli, 2) if pf_wages_rate > 0 else 0
 
         if pf_employee > 0:
             deductions_breakdown.append({"code": "PF_EMP", "name": "Provident Fund (Employee)",
@@ -2151,15 +2355,17 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
                                          "calc_type": "percentage_of_basic", "percentage": pf_edli * 100,
                                          "is_statutory_computed": True, "amount": pf_edli_amt})
 
-        statutory["pf"] = {"wages": pf_wages, "base_used": base_for_pf, "employee": pf_employee,
-                          "employer": pf_employer, "admin": pf_admin_amt, "edli": pf_edli_amt,
-                          "eps_capped_at": PF_EPS_CAP}
+        statutory["pf"] = {"wages_rate": pf_wages_rate, "wages_earned": pf_wages_earned,
+                           "base_used_rate": pf_base_rate, "base_used_earned": pf_base_earned,
+                           "employee": pf_employee, "employer": pf_employer,
+                           "admin": pf_admin_amt, "edli": pf_edli_amt,
+                           "eps_capped_at": PF_EPS_CAP}
 
-        # ESIC: only if gross ≤ 21000 (or template threshold)
+        # ESIC: applicability by Rate inclusion; computation on Earned inclusion (gross proxy)
         esic_threshold = float((esic_tpl or {}).get("threshold_gross", ESIC_WAGE_CEILING))
         esic_emp_rate = float((esic_tpl or {}).get("employee_rate", ESIC_EMPLOYEE_RATE * 100)) / 100
         esic_er_rate  = float((esic_tpl or {}).get("employer_rate", ESIC_EMPLOYER_RATE * 100)) / 100
-        esic_applicable = gross_monthly <= esic_threshold and gross_monthly > 0
+        esic_applicable = gross_rate <= esic_threshold and gross_rate > 0
         esic_employee = round(gross_monthly * esic_emp_rate, 2) if esic_applicable else 0
         esic_employer = round(gross_monthly * esic_er_rate, 2) if esic_applicable else 0
         if esic_applicable:
@@ -2170,17 +2376,20 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
                                          "calc_type": "percentage_of_gross", "percentage": esic_er_rate * 100,
                                          "is_statutory_computed": True, "amount": esic_employer})
         statutory["esic"] = {"applicable": esic_applicable, "threshold": esic_threshold,
+                             "gross_rate": gross_rate, "gross_earned": gross_monthly,
                              "employee": esic_employee, "employer": esic_employer}
 
-        # Professional Tax (slab-based per state)
-        pt_amount = _eval_pt_from_template(pt_tpl, gross_monthly)
+        # Professional Tax — applicability uses Rate gross (employee-wise slab) but charge on earned period
+        pt_amount = _eval_pt_from_template(pt_tpl, gross_rate)
+        # Pro-rate PT by attendance (some states waive for full LOP month — admins can override via slabs)
+        pt_amount = round(pt_amount * attendance_factor, 2) if gross_rate > 0 else 0
         if pt_amount > 0:
             deductions_breakdown.append({"code": "PT", "name": "Professional Tax",
                                          "calc_type": "slab", "percentage": 0,
                                          "is_statutory_computed": True, "amount": pt_amount})
-        statutory["pt"] = {"amount": pt_amount}
+        statutory["pt"] = {"amount": pt_amount, "based_on_rate_gross": gross_rate}
 
-        # LWF (state-specific, usually fixed)
+        # LWF
         lwf = _eval_lwf_from_template(lwf_tpl)
         if lwf["employee"] > 0:
             deductions_breakdown.append({"code": "LWF_EMP", "name": "Labour Welfare Fund (Employee)",
@@ -2192,18 +2401,19 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
                                          "is_statutory_computed": True, "amount": lwf["employer"]})
         statutory["lwf"] = lwf
 
-        # TDS (monthly from annual projection)
-        # Annual taxable = sum of earnings that attract TDS * 12 (or gross * 12 if none tagged)
-        tds_earnings_monthly = sum(e["amount"] for e in earnings_breakdown if e["attracts_tds"])
+        # TDS — annual projection from rate gross (not earned) so one LOP month doesn't skew annual
+        tds_earnings_monthly = sum(e["rate_amount"] for e in earnings_breakdown if e["attracts_tds"])
         if tds_earnings_monthly == 0:
-            tds_earnings_monthly = gross_monthly
+            tds_earnings_monthly = gross_rate
         annual_taxable = tds_earnings_monthly * 12
         tds_monthly = _eval_tds_monthly(annual_taxable, tds_tpl)
+        # TDS is not pro-rated; it's an annual obligation divided by 12
         if tds_monthly > 0:
             deductions_breakdown.append({"code": "TDS", "name": "Income Tax (TDS)",
                                          "calc_type": "slab_annual", "percentage": 0,
                                          "is_statutory_computed": True, "amount": tds_monthly})
-        statutory["tds"] = {"annual_taxable": round(annual_taxable, 2), "monthly_tds": tds_monthly}
+        statutory["tds"] = {"annual_taxable": round(annual_taxable, 2), "monthly_tds": tds_monthly,
+                            "projected_from": "rate"}
 
     # ── Phase 4: Totals ──
     total_deductions = round(sum(d["amount"] for d in deductions_breakdown), 2)
@@ -2215,22 +2425,31 @@ async def compute_salary(data: dict, current_user: dict = Depends(get_current_us
         "earnings": earnings_breakdown,
         "deductions": deductions_breakdown,
         "provisions": provisions_breakdown,
-        "basic_monthly": round(basic_amount, 2),
-        "pf_wages_monthly": round(pf_wages, 2),
-        "gross_monthly": gross_monthly,
+        "skipped_components": skipped_components,
+        "basic_rate_monthly": round(basic_rate, 2),
+        "basic_earned_monthly": round(pool_earned["basic"], 2),
+        "basic_monthly": round(pool_earned["basic"], 2),  # alias for backward compat
+        "pf_wages_rate_monthly": round(pf_wages_rate, 2),
+        "pf_wages_earned_monthly": round(pf_wages_earned, 2),
+        "pf_wages_monthly": round(pf_wages_earned, 2),  # alias
+        "gross_rate_monthly": gross_rate,
+        "gross_monthly": gross_monthly,          # earned gross (primary)
         "total_deductions_monthly": total_deductions,
         "total_provisions_monthly": total_provisions,
         "net_monthly": net_monthly,
         "ctc_monthly": ctc_monthly,
-        "gross_annual": round(gross_monthly * 12, 2),
+        "gross_annual": round(gross_rate * 12, 2),  # annual from RATE (unaffected by one month LOP)
         "total_deductions_annual": round(total_deductions * 12, 2),
         "net_annual": round(net_monthly * 12, 2),
         "ctc_annual": round(ctc_monthly * 12, 2),
+        "rate_days": rate_days,
+        "earned_days": earned_days,
+        "attendance_factor": round(attendance_factor, 4),
         "statutory": statutory,
     }
     if pay_type == "daily":
-        result["gross_daily"] = round(gross_monthly / 30, 2)
-        result["net_daily"] = round(net_monthly / 30, 2)
+        result["gross_daily"] = round(gross_monthly / (rate_days or 30), 2)
+        result["net_daily"] = round(net_monthly / (rate_days or 30), 2)
     return result
 
 
