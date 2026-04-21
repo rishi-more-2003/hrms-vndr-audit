@@ -21,12 +21,32 @@ export const employeeAPI = {
   updatePermissions: (id, permissions) => api.put(`/employees/${id}/permissions`, { permissions }),
   updateReportsTo: (id, reportsTo) => api.put(`/employees/${id}/reports-to`, null, { params: { reports_to: reportsTo } }),
   updateApprovalHierarchy: (id, data) => api.put(`/employees/${id}/approval-hierarchy`, data),
+  updatePolicies: (id, data) => api.put(`/employees/${id}/policies`, data),
+  effectivePolicies: (id) => api.get(`/employees/${id}/effective-policies`),
   lastCode: () => api.get('/employees/meta/last-code'),
   bulkUploadTemplate: () => api.get('/employees/meta/bulk-upload-template'),
   bulkUpload: (rows, continue_on_error = true) => api.post('/employees/bulk-upload', { rows, continue_on_error }),
   listDocuments: (id, category) => api.get(`/employees/${id}/documents${category ? '?category=' + category : ''}`),
   addDocument: (id, data) => api.post(`/employees/${id}/documents`, data),
   deleteDocument: (id, docId) => api.delete(`/employees/${id}/documents/${docId}`),
+};
+
+export const meAPI = {
+  profile: () => api.get('/me/employee-profile'),
+  updateProfile: (data) => api.put('/me/employee-profile', data),
+  effectivePolicies: () => api.get('/me/effective-policies'),
+  changeRequests: () => api.get('/me/change-requests'),
+  createChangeRequest: (data) => api.post('/me/change-requests', data),
+};
+
+export const changeRequestAPI = {
+  list: (status) => api.get('/employee-change-requests' + (status ? '?status=' + status : '')),
+  approve: (id) => api.put(`/employee-change-requests/${id}/approve`),
+  reject: (id, reason) => api.put(`/employee-change-requests/${id}/reject`, { reason }),
+};
+
+export const auditAPI = {
+  list: (params) => api.get('/audit-log', { params }),
 };
 
 export const departmentAPI = {

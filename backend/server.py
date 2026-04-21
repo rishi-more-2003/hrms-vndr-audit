@@ -640,6 +640,35 @@ MANDATORY_EMPLOYEE_FIELDS = [
     "pan", "aadhaar",
 ]
 
+# Fields an employee can self-edit (general info only)
+EMPLOYEE_SELF_EDITABLE_FIELDS = {
+    "middle_name", "marital_status", "phone", "telephone",
+    "corr_address_line1", "corr_address_line2", "corr_address_line3",
+    "corr_address_city", "corr_address_pincode",
+    "perm_address_line1", "perm_address_line2", "perm_address_line3",
+    "perm_address_city", "perm_address_pincode", "perm_same_as_corr",
+    "blood_group", "height_weight", "identification_mark", "qualification",
+    "birth_place", "emergency_contact_name", "emergency_contact_phone",
+    "emergency_contact_relation",
+}
+
+# Fields protected from employee edits (admin-only / change-request)
+EMPLOYEE_PROTECTED_FIELDS = {
+    "employee_code", "first_name", "last_name", "email", "gender",
+    "date_of_birth", "nationality", "date_of_joining", "location_id",
+    "designation_id", "department_id", "grade_id", "employment_type",
+    "status", "pan", "aadhaar", "uan_no", "pf_account_no", "pension_account_no",
+    "edli_account_no", "esic_account_no", "lin_no",
+    "salary_payment_mode", "salary_ac_bank", "salary_ac_no", "salary_ac_ifsc",
+    "salary_ac_branch", "pf_member", "pension_member", "esic_member",
+    "pt_applicable", "lwf_applicable", "voluntary_pf", "voluntary_pension",
+    "leave_policy_id", "attendance_policy_id", "overtime_policy_id",
+    "reimbursement_policy_id", "bonus_policy_id", "gratuity_policy_id",
+    "advance_policy_id", "loan_policy_id",
+    "leave_approver_id", "reimbursement_approver_id", "overtime_approver_id",
+    "attendance_approver_id", "payroll_approver_id", "general_manager_id",
+}
+
 
 async def _check_employee_uniqueness(data: dict, exclude_employee_id: str = None) -> list:
     """Uniqueness across ACTIVE employees only. Rejoined employees can reuse IDs."""
@@ -863,6 +892,248 @@ async def delete_employee_document(employee_id: str, doc_id: str, current_user: 
     require_admin(current_user)
     await db.employee_documents.delete_one({"id": doc_id, "employee_id": employee_id})
     return {"message": "Document removed"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Employee SELF-SERVICE endpoints (employee logged in, viewing own data)
+# ═══════════════════════════════════════════════════════════════════
+
+@api_router.get("/me/employee-profile")
+async def get_my_profile(current_user: dict = Depends(get_current_user)):
+    """Return the logged-in user's own employee profile (full data, read-only for employee)."""
+    emp = await db.employees.find_one({"user_id": current_user["id"]}, {"_id": 0})
+    if not emp:
+        emp = await db.employees.find_one({"email": current_user["email"]}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="No employee profile linked to this user")
+    return emp
+
+
+@api_router.put("/me/employee-profile")
+async def update_my_profile(data: dict, current_user: dict = Depends(get_current_user)):
+    """Employee self-edit — only fields in EMPLOYEE_SELF_EDITABLE_FIELDS are applied."""
+    emp = await db.employees.find_one({"user_id": current_user["id"]}, {"_id": 0, "id": 1})
+    if not emp:
+        raise HTTPException(status_code=404, detail="No employee profile linked")
+    data = _normalize_employee_payload(data)
+    payload = {k: v for k, v in data.items() if k in EMPLOYEE_SELF_EDITABLE_FIELDS}
+    if not payload:
+        raise HTTPException(status_code=400, detail="No editable fields provided")
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.employees.update_one({"id": emp["id"]}, {"$set": payload})
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "entity": "employee", "entity_id": emp["id"],
+        "action": "self_profile_update", "actor_id": current_user["id"],
+        "changes": payload, "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"message": "Profile updated", "updated_fields": list(payload.keys())}
+
+
+@api_router.get("/me/effective-policies")
+async def get_my_effective_policies(current_user: dict = Depends(get_current_user)):
+    emp = await db.employees.find_one({"user_id": current_user["id"]}, {"_id": 0})
+    if not emp:
+        emp = await db.employees.find_one({"email": current_user["email"]}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="No employee profile")
+    return await _resolve_effective_policies(emp)
+
+
+@api_router.get("/me/change-requests")
+async def my_change_requests(current_user: dict = Depends(get_current_user)):
+    return await db.employee_change_requests.find(
+        {"requested_by": current_user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+
+
+@api_router.post("/me/change-requests")
+async def create_change_request(data: dict, current_user: dict = Depends(get_current_user)):
+    """Employee requests change to a PROTECTED field (admin must approve)."""
+    emp = await db.employees.find_one({"user_id": current_user["id"]}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="No employee profile")
+    changes = data.get("changes") or {}
+    invalid = [k for k in changes.keys() if k not in EMPLOYEE_PROTECTED_FIELDS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Fields not requiring approval: {invalid}")
+    req = {
+        "id": str(uuid.uuid4()), "employee_id": emp["id"],
+        "requested_by": current_user["id"],
+        "changes": changes, "reason": data.get("reason", ""),
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.employee_change_requests.insert_one(req)
+    return {k: v for k, v in req.items() if k != "_id"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EMPLOYEE POLICY ASSIGNMENT + EFFECTIVE POLICIES (admin)
+# ═══════════════════════════════════════════════════════════════════
+
+POLICY_COLLECTIONS = {
+    "leave": "leave_policy_templates",
+    "attendance": "attendance_policy_templates",
+    "overtime": "overtime_policy_templates",
+    "reimbursement": "reimbursement_policy_templates",
+    "bonus": "bonus_policy_templates",
+    "gratuity": "gratuity_policy_templates",
+    "advance": "advance_policy_templates",
+    "loan": "loan_policy_templates",
+}
+
+POLICY_LINK_KEYS = [
+    ("leave_policy_id", "leave"),
+    ("attendance_policy_id", "attendance"),
+    ("overtime_policy_id", "overtime"),
+    ("reimbursement_policy_id", "reimbursement"),
+    ("bonus_policy_id", "bonus"),
+    ("gratuity_policy_id", "gratuity"),
+    ("advance_policy_id", "advance"),
+    ("loan_policy_id", "loan"),
+]
+
+
+async def _resolve_effective_policies(emp: dict) -> dict:
+    """
+    Resolve the effective policy set for an employee.
+    Priority: direct employee assignment → salary template link → organization default.
+    Returns: {policies: {type: policy_doc}, sources: {type: 'direct'|'template'|'default'|'none'}}
+    """
+    result = {"policies": {}, "sources": {}}
+
+    # Get linked salary template (if any) for fallback
+    assignment = await db.salary_assignments.find_one({"employee_id": emp["id"]}, {"_id": 0})
+    tmpl = None
+    if assignment and assignment.get("salary_template_id"):
+        tmpl = await db.salary_templates.find_one({"id": assignment["salary_template_id"]}, {"_id": 0})
+
+    for key, ptype in POLICY_LINK_KEYS:
+        col = POLICY_COLLECTIONS[ptype]
+        policy = None
+        source = "none"
+
+        # 1. Direct employee assignment
+        pid = emp.get(key)
+        if pid:
+            policy = await db[col].find_one({"id": pid}, {"_id": 0})
+            if policy: source = "direct"
+
+        # 2. Fallback: salary template link
+        if not policy and tmpl and tmpl.get(key):
+            policy = await db[col].find_one({"id": tmpl[key]}, {"_id": 0})
+            if policy: source = "template"
+
+        result["policies"][ptype] = policy
+        result["sources"][ptype] = source
+
+    # Approval hierarchy
+    result["approval_hierarchy"] = {
+        "leave_approver_id": emp.get("leave_approver_id"),
+        "attendance_approver_id": emp.get("attendance_approver_id"),
+        "overtime_approver_id": emp.get("overtime_approver_id"),
+        "reimbursement_approver_id": emp.get("reimbursement_approver_id"),
+        "payroll_approver_id": emp.get("payroll_approver_id"),
+        "general_manager_id": emp.get("general_manager_id"),
+        "reports_to": emp.get("reports_to"),
+    }
+    # Hydrate approver names for display
+    approver_ids = {v for v in result["approval_hierarchy"].values() if v}
+    approvers_map = {}
+    if approver_ids:
+        async for a in db.employees.find({"id": {"$in": list(approver_ids)}},
+                                         {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "employee_code": 1, "email": 1}):
+            approvers_map[a["id"]] = a
+    result["approvers"] = approvers_map
+
+    return result
+
+
+@api_router.get("/employees/{employee_id}/effective-policies")
+async def get_effective_policies(employee_id: str, current_user: dict = Depends(get_current_user)):
+    emp = await db.employees.find_one({"id": employee_id}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    if current_user["role"] != UserRole.ADMIN and current_user["id"] != emp.get("user_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await _resolve_effective_policies(emp)
+
+
+@api_router.put("/employees/{employee_id}/policies")
+async def update_employee_policies(employee_id: str, data: dict, current_user: dict = Depends(get_current_user)):
+    """Admin: assign policy templates directly to an employee (overrides salary-template links)."""
+    require_admin(current_user)
+    allowed = {k for k, _ in POLICY_LINK_KEYS}
+    payload = {k: v for k, v in data.items() if k in allowed}
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.employees.update_one({"id": employee_id}, {"$set": payload})
+    # Audit
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "entity": "employee", "entity_id": employee_id,
+        "action": "policy_assignment", "actor_id": current_user["id"],
+        "changes": payload, "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"message": "Employee policies updated", "set": payload}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# CHANGE REQUEST ADMIN QUEUE
+# ═══════════════════════════════════════════════════════════════════
+
+@api_router.get("/employee-change-requests")
+async def list_change_requests(status: str = None, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    q = {}
+    if status: q["status"] = status
+    return await db.employee_change_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api_router.put("/employee-change-requests/{req_id}/approve")
+async def approve_change_request(req_id: str, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    req = await db.employee_change_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req or req.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Request not pending")
+    # Apply changes
+    changes = dict(req["changes"])
+    changes["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Uniqueness check for approved changes
+    violations = await _check_employee_uniqueness(changes, exclude_employee_id=req["employee_id"])
+    if violations:
+        raise HTTPException(status_code=409, detail={"message": "Cannot approve — unique conflict", "violations": violations})
+    await db.employees.update_one({"id": req["employee_id"]}, {"$set": changes})
+    await db.employee_change_requests.update_one({"id": req_id}, {"$set": {
+        "status": "approved", "reviewed_by": current_user["id"],
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    await db.audit_log.insert_one({
+        "id": str(uuid.uuid4()), "entity": "employee", "entity_id": req["employee_id"],
+        "action": "change_request_approved", "actor_id": current_user["id"],
+        "changes": changes, "request_id": req_id, "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"message": "Approved", "applied": changes}
+
+
+@api_router.put("/employee-change-requests/{req_id}/reject")
+async def reject_change_request(req_id: str, data: dict = None, current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    await db.employee_change_requests.update_one({"id": req_id}, {"$set": {
+        "status": "rejected", "reviewed_by": current_user["id"],
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "reject_reason": (data or {}).get("reason", ""),
+    }})
+    return {"message": "Rejected"}
+
+
+# Audit log view (admin)
+@api_router.get("/audit-log")
+async def get_audit_log(entity: str = None, entity_id: str = None, limit: int = 200,
+                         current_user: dict = Depends(get_current_user)):
+    require_admin(current_user)
+    q = {}
+    if entity: q["entity"] = entity
+    if entity_id: q["entity_id"] = entity_id
+    return await db.audit_log.find(q, {"_id": 0}).sort("at", -1).limit(limit).to_list(limit)
 
 
 @api_router.put("/employees/{employee_id}/reports-to")

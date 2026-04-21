@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { employeeAPI, departmentAPI, designationAPI, locationAPI, salaryTemplateAPI, salaryAssignmentAPI } from '../services/api';
-import { User, FloppyDisk, X, Upload, Trash, Warning, Info } from '@phosphor-icons/react';
+import { employeeAPI, departmentAPI, designationAPI, locationAPI, salaryTemplateAPI, salaryAssignmentAPI, policyTemplateAPI, meAPI } from '../services/api';
+import { User, FloppyDisk, X, Upload, Trash, Warning, Info, Lock } from '@phosphor-icons/react';
 import { toast } from 'sonner';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -18,10 +18,23 @@ var TABS = [
   { key: 'kyc', label: 'KYC / Identity' },
   { key: 'voluntary', label: 'Voluntary' },
   { key: 'previous', label: 'Previous Emp' },
+  { key: 'policies', label: 'Policies' },
   { key: 'hierarchy', label: 'Approval Hierarchy' },
-  { key: 'assignments', label: 'Salary / Policy' },
+  { key: 'assignments', label: 'Salary Template' },
   { key: 'documents', label: 'Documents' },
 ];
+
+// Fields an employee can self-edit
+var EMP_EDITABLE = new Set([
+  'middle_name', 'marital_status', 'phone', 'telephone',
+  'corr_address_line1', 'corr_address_line2', 'corr_address_line3',
+  'corr_address_city', 'corr_address_pincode',
+  'perm_address_line1', 'perm_address_line2', 'perm_address_line3',
+  'perm_address_city', 'perm_address_pincode', 'perm_same_as_corr',
+  'blood_group', 'height_weight', 'identification_mark', 'qualification',
+  'birth_place', 'emergency_contact_name', 'emergency_contact_phone',
+  'emergency_contact_relation',
+]);
 
 // Helper renderer — consistent compact field
 function Field({ label, required, children, hint }) {
@@ -36,29 +49,58 @@ function Field({ label, required, children, hint }) {
 
 function Txt(props) { return <Input {...props} className={"h-9 text-sm " + (props.className || '')} />; }
 
-export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allEmployees, departments, designations, locations, grades, salaryTemplates }) {
+function LockBadge() {
+  return <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 bg-[#A28B7A]/10 text-[#A28B7A] rounded font-semibold" title="Admin-only field"><Lock size={10} /> LOCKED</span>;
+}
+
+export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allEmployees, departments, designations, locations, grades, salaryTemplates, selfMode }) {
   var [tab, setTab] = useState('personal');
   var [form, setForm] = useState({});
   var [lastCode, setLastCode] = useState(null);
   var [docs, setDocs] = useState([]);
   var [salaryAssignment, setSalaryAssignment] = useState(null);
+  var [effectivePolicies, setEffectivePolicies] = useState(null);
+  var [policyTpls, setPolicyTpls] = useState({});
   var [loading, setLoading] = useState(false);
-  var isEdit = !!employeeId;
+  var isEdit = !!employeeId || selfMode;
+  var readOnlyAll = !!selfMode;  // in selfMode, most fields are read-only
+  // Helper: can this field be edited right now?
+  var canEdit = function(fieldName) {
+    if (!selfMode) return true;  // admin can edit all
+    return EMP_EDITABLE.has(fieldName);
+  };
 
   useEffect(function() {
     fetchBase();
-    if (isEdit) fetchExisting();
-  }, [employeeId]);
+    if (selfMode) fetchMine();
+    else if (employeeId) fetchExisting();
+  }, [employeeId, selfMode]);
 
   async function fetchBase() {
     try { var r = await employeeAPI.lastCode(); setLastCode(r.data.last_code); } catch (e) {}
+    // Policy templates for the Policies tab
+    try {
+      var types = ['leave','attendance','overtime','reimbursement','bonus','gratuity','advance','loan'];
+      var results = await Promise.all(types.map(function(t) { return policyTemplateAPI.getAll(t).catch(function() { return { data: [] }; }); }));
+      var map = {};
+      types.forEach(function(t, i) { map[t] = results[i].data || []; });
+      setPolicyTpls(map);
+    } catch (e) {}
   }
   async function fetchExisting() {
     try {
       var r = await employeeAPI.getProfile(employeeId); setForm(r.data || {});
       var d = await employeeAPI.listDocuments(employeeId); setDocs(d.data || []);
       try { var s = await salaryAssignmentAPI.get(employeeId); setSalaryAssignment(s.data || null); } catch (e) {}
+      try { var e2 = await employeeAPI.effectivePolicies(employeeId); setEffectivePolicies(e2.data || null); } catch (e) {}
     } catch (e) { toast.error('Failed to load employee'); }
+  }
+  async function fetchMine() {
+    try {
+      var r = await meAPI.profile(); setForm(r.data || {});
+      try { var e2 = await meAPI.effectivePolicies(); setEffectivePolicies(e2.data || null); } catch (e) {}
+      try { var d = await employeeAPI.listDocuments(r.data.id); setDocs(d.data || []); } catch (e) {}
+    } catch (e) { toast.error('Failed to load profile'); }
   }
 
   function f(k, v) { setForm(function(prev) { return {...prev, [k]: v}; }); }
@@ -66,7 +108,13 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
   async function save() {
     setLoading(true);
     try {
-      if (isEdit) {
+      if (selfMode) {
+        // Only send editable fields
+        var payload = {};
+        Object.keys(form).forEach(function(k) { if (EMP_EDITABLE.has(k)) payload[k] = form[k]; });
+        await meAPI.updateProfile(payload);
+        toast.success('Profile updated');
+      } else if (isEdit) {
         await employeeAPI.updateProfile(employeeId, form);
         toast.success('Profile updated');
       } else {
@@ -95,6 +143,18 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
         general_manager_id: form.general_manager_id,
       });
       toast.success('Hierarchy updated');
+    } catch (e) { toast.error('Failed'); }
+    setLoading(false);
+  }
+
+  async function savePolicies() {
+    setLoading(true);
+    try {
+      var payload = {};
+      ['leave_policy_id','attendance_policy_id','overtime_policy_id','reimbursement_policy_id','bonus_policy_id','gratuity_policy_id','advance_policy_id','loan_policy_id'].forEach(function(k) { payload[k] = form[k] || ''; });
+      await employeeAPI.updatePolicies(employeeId, payload);
+      var e2 = await employeeAPI.effectivePolicies(employeeId); setEffectivePolicies(e2.data);
+      toast.success('Policies assigned');
     } catch (e) { toast.error('Failed'); }
     setLoading(false);
   }
@@ -150,21 +210,31 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
         ); })}
       </div>
 
+      {selfMode && ['employment','salary_bank','statutory','kyc','voluntary','previous','hierarchy','assignments'].indexOf(tab) >= 0 && (
+        <div className="bg-[#A28B7A]/10 border border-[#A28B7A]/20 rounded-lg p-3 flex items-start gap-2">
+          <Lock size={14} className="text-[#A28B7A] mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-[#2A2624]">This section is view-only</p>
+            <p className="text-[11px] text-[#A28B7A]">These details are managed by HR/Admin. To request a correction, use the "Request Change" button in the footer.</p>
+          </div>
+        </div>
+      )}
+
       <div className="max-h-[60vh] overflow-y-auto pr-2">
         {/* PERSONAL */}
         {tab === 'personal' && (
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <Field label="Employee ID" required><Txt value={form.employee_code || ''} onChange={function(e) { f('employee_code', e.target.value); }} data-testid="emp-code" /></Field>
-            <Field label="First Name" required><Txt value={form.first_name || ''} onChange={function(e) { f('first_name', e.target.value); }} data-testid="emp-first-name" /></Field>
+            <Field label="Employee ID" required><Txt value={form.employee_code || ''} onChange={function(e) { f('employee_code', e.target.value); }} data-testid="emp-code" disabled={!canEdit('employee_code')} /></Field>
+            <Field label="First Name" required><Txt value={form.first_name || ''} onChange={function(e) { f('first_name', e.target.value); }} data-testid="emp-first-name" disabled={!canEdit('first_name')} /></Field>
             <Field label="Middle Name"><Txt value={form.middle_name || ''} onChange={function(e) { f('middle_name', e.target.value); }} /></Field>
-            <Field label="Last Name" required><Txt value={form.last_name || ''} onChange={function(e) { f('last_name', e.target.value); }} data-testid="emp-last-name" /></Field>
+            <Field label="Last Name" required><Txt value={form.last_name || ''} onChange={function(e) { f('last_name', e.target.value); }} data-testid="emp-last-name" disabled={!canEdit('last_name')} /></Field>
             <Field label="Gender" required>
-              <Select value={form.gender || ''} onValueChange={function(v) { f('gender', v); }}>
+              <Select value={form.gender || ''} onValueChange={function(v) { f('gender', v); }} disabled={!canEdit('gender')}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value="male">Male</SelectItem><SelectItem value="female">Female</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent>
               </Select>
             </Field>
-            <Field label="Date of Birth" required><Txt type="date" value={form.date_of_birth || ''} onChange={function(e) { f('date_of_birth', e.target.value); }} /></Field>
+            <Field label="Date of Birth" required><Txt type="date" value={form.date_of_birth || ''} onChange={function(e) { f('date_of_birth', e.target.value); }} disabled={!canEdit('date_of_birth')} /></Field>
             <Field label="Marital Status">
               <Select value={form.marital_status || ''} onValueChange={function(v) { f('marital_status', v); }}>
                 <SelectTrigger className="h-9"><SelectValue placeholder="Select" /></SelectTrigger>
@@ -420,10 +490,63 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
           </div>
         )}
 
+        {/* POLICIES */}
+        {tab === 'policies' && (
+          <div className="space-y-4">
+            <p className="text-xs text-[#A28B7A]">Admin assigns up to 8 policies directly to this employee. Direct assignment overrides any policy linked at the salary-template level.</p>
+
+            {selfMode && (
+              <div className="p-3 bg-[#7D9D85]/10 rounded-lg flex items-start gap-2">
+                <Info size={14} className="text-[#7D9D85] mt-0.5" />
+                <p className="text-[11px] text-[#2A2624]">Your assigned policies are shown below in read-only mode. Contact HR for changes.</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                ['leave_policy_id', 'leave', 'Leave Policy'],
+                ['attendance_policy_id', 'attendance', 'Attendance Policy'],
+                ['overtime_policy_id', 'overtime', 'Overtime Policy'],
+                ['reimbursement_policy_id', 'reimbursement', 'Reimbursement Policy'],
+                ['bonus_policy_id', 'bonus', 'Bonus Policy'],
+                ['gratuity_policy_id', 'gratuity', 'Gratuity Policy'],
+                ['advance_policy_id', 'advance', 'Advance Policy'],
+                ['loan_policy_id', 'loan', 'Loan Policy'],
+              ].map(function(row) {
+                var key = row[0], ptype = row[1], label = row[2];
+                var list = policyTpls[ptype] || [];
+                var source = effectivePolicies && effectivePolicies.sources ? effectivePolicies.sources[ptype] : 'none';
+                var resolved = effectivePolicies && effectivePolicies.policies ? effectivePolicies.policies[ptype] : null;
+                return (
+                  <div key={key} className="border border-[#E8E2D9] rounded-lg p-3 bg-white">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <Label className="text-xs font-semibold text-[#2A2624]">{label}</Label>
+                      <span className={'text-[9px] uppercase font-bold px-1.5 py-0.5 rounded ' + (source === 'direct' ? 'bg-[#7D9D85]/20 text-[#7D9D85]' : source === 'template' ? 'bg-[#E8B25C]/20 text-[#E8B25C]' : 'bg-[#A28B7A]/10 text-[#A28B7A]')}>
+                        {source === 'direct' ? '●  DIRECT' : source === 'template' ? '◆  FROM TEMPLATE' : '—  NONE'}
+                      </span>
+                    </div>
+                    {selfMode ? (
+                      <p className="text-xs text-[#2A2624] font-medium">{resolved ? (resolved.name || resolved.template_name || resolved.id) : 'Not assigned'}</p>
+                    ) : (
+                      <Select value={form[key] || ''} onValueChange={function(v) { f(key, v === 'none' ? '' : v); }}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="Not assigned" /></SelectTrigger>
+                        <SelectContent><SelectItem value="none">Not assigned</SelectItem>{list.map(function(t) { return <SelectItem key={t.id} value={t.id}>{t.name || t.template_name || 'Unnamed'}</SelectItem>; })}</SelectContent>
+                      </Select>
+                    )}
+                    {resolved && source === 'template' && <p className="text-[10px] text-[#A28B7A] mt-1">Inherited via Salary Template. Set directly to override.</p>}
+                  </div>
+                );
+              })}
+            </div>
+
+            {!selfMode && isEdit && <Button onClick={savePolicies} disabled={loading} className="bg-[#7D9D85] hover:bg-[#6A8872]" data-testid="save-policies-btn">Save Policy Assignments</Button>}
+          </div>
+        )}
+
         {/* HIERARCHY */}
         {tab === 'hierarchy' && isEdit && (
           <div className="space-y-4">
-            <p className="text-xs text-[#A28B7A]">Set per-flow approvers. Each flow can have a different approver — useful when Leave goes to Manager but Reimbursement goes to Finance.</p>
+            <p className="text-xs text-[#A28B7A]">Per-flow approvers. Each flow can have a different approver — useful when Leave goes to Manager but Reimbursement goes to Finance.</p>
             <div className="grid grid-cols-2 gap-3">
               {[
                 ['leave_approver_id', 'Leave Approver'],
@@ -432,16 +555,23 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
                 ['reimbursement_approver_id', 'Reimbursement Approver'],
                 ['payroll_approver_id', 'Payroll Approver'],
                 ['general_manager_id', 'General Manager (escalation)'],
-              ].map(function(pair) { var key = pair[0], label = pair[1]; return (
-                <Field key={key} label={label}>
-                  <Select value={form[key] || ''} onValueChange={function(v) { f(key, v === 'none' ? '' : v); }}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Not set" /></SelectTrigger>
-                    <SelectContent><SelectItem value="none">Not set</SelectItem>{emps.filter(function(e) { return e.id !== employeeId; }).map(function(e) { return <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name} ({e.employee_code})</SelectItem>; })}</SelectContent>
-                  </Select>
-                </Field>
+              ].map(function(pair) { var key = pair[0], label = pair[1];
+                var approverInfo = effectivePolicies && effectivePolicies.approvers ? effectivePolicies.approvers[form[key]] : null;
+                return (
+                <div key={key} className="border border-[#E8E2D9] rounded-lg p-3">
+                  <Label className="text-xs font-semibold text-[#2A2624] mb-1.5 block">{label}</Label>
+                  {selfMode ? (
+                    <p className="text-sm text-[#2A2624]">{approverInfo ? `${approverInfo.first_name} ${approverInfo.last_name} (${approverInfo.employee_code})` : <span className="text-[#A28B7A] text-xs italic">Not set</span>}</p>
+                  ) : (
+                    <Select value={form[key] || ''} onValueChange={function(v) { f(key, v === 'none' ? '' : v); }}>
+                      <SelectTrigger className="h-9"><SelectValue placeholder="Not set" /></SelectTrigger>
+                      <SelectContent><SelectItem value="none">Not set</SelectItem>{emps.filter(function(e) { return e.id !== employeeId; }).map(function(e) { return <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name} ({e.employee_code})</SelectItem>; })}</SelectContent>
+                    </Select>
+                  )}
+                </div>
               ); })}
             </div>
-            <Button onClick={saveHierarchy} disabled={loading} className="bg-[#7D9D85] hover:bg-[#6A8872]">Save Hierarchy</Button>
+            {!selfMode && <Button onClick={saveHierarchy} disabled={loading} className="bg-[#7D9D85] hover:bg-[#6A8872]">Save Hierarchy</Button>}
           </div>
         )}
 
@@ -494,8 +624,23 @@ export default function EmployeeProfileForm({ employeeId, onClose, onSaved, allE
       {/* Footer */}
       <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E8E2D9]">
         <Button variant="outline" onClick={onClose}><X size={14} className="mr-1" /> Cancel</Button>
-        {['personal','contact','address','employment','salary_bank','statutory','kyc','voluntary','previous'].indexOf(tab) >= 0 && (
-          <Button onClick={save} disabled={loading} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="save-profile"><FloppyDisk size={14} className="mr-1" /> {isEdit ? 'Update' : 'Create'} Employee</Button>
+        {selfMode && ['employment','salary_bank','statutory','kyc','voluntary','previous','hierarchy'].indexOf(tab) >= 0 && (
+          <Button variant="outline" onClick={async function() {
+            var field = window.prompt('Field to request change (e.g. phone, salary_ac_no, pan):');
+            if (!field) return;
+            var val = window.prompt('New value:');
+            if (val === null) return;
+            var reason = window.prompt('Reason (optional):') || '';
+            try {
+              await meAPI.createChangeRequest({ changes: { [field]: val }, reason: reason });
+              toast.success('Change request submitted for admin approval');
+            } catch (e) { toast.error(e.response?.data?.detail || 'Failed'); }
+          }} className="text-[#A28B7A]" data-testid="request-change-btn"><Lock size={12} className="mr-1" /> Request Change</Button>
+        )}
+        {['personal','contact','address','policies','documents'].indexOf(tab) === -1 && isEdit && !selfMode && null}
+        {((!selfMode && ['personal','contact','address','employment','salary_bank','statutory','kyc','voluntary','previous'].indexOf(tab) >= 0) ||
+          (selfMode && ['personal','contact','address'].indexOf(tab) >= 0)) && (
+          <Button onClick={save} disabled={loading} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="save-profile"><FloppyDisk size={14} className="mr-1" /> {isEdit ? (selfMode ? 'Save My Changes' : 'Update Employee') : 'Create Employee'}</Button>
         )}
       </div>
     </div>
