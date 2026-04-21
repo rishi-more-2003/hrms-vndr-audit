@@ -1,0 +1,58 @@
+{
+  "summary": "Phase 10 Employee Self-Service tested end-to-end. Backend is rock solid — 22/22 pytest pass (11 existing + 11 new security/isolation tests). MAJOR FRONTEND GAPS: (1) 'My Profile' sidebar link NOT visible to employee@hrms.com (permission filter excludes it); user can only reach page via direct URL typing. (2) Locked tabs in selfMode render inputs as fully EDITABLE on the UI (employment / salary_bank / kyc / previous) — lock banner shows but input[disabled] / readonly attribute is missing, so a user can type into PAN/Aadhaar/Salary A/C/IFSC/Bank Branch etc. (backend correctly filters PUT so NO actual data leak, but UX contract violated and user typing would be silently discarded). (3) 'Request Change' flow uses 3 chained window.prompt() dialogs instead of a proper shadcn dialog — not E2E-testable and poor UX.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Layout.js sidebar", "issue": "'My Profile' link not rendered for non-admin user (hasPermission('my_profile') false). Employee has no entry point to /my-profile; only works via direct URL.", "selector": "[data-testid='nav-my-profile']", "priority": "HIGH"},
+      {"component": "EmployeeProfileForm.js selfMode (tabs: employment, salary_bank, kyc, previous)", "issue": "Locked-tab inputs lack disabled/readonly attr despite selfMode. Salary_bank shows 4 fully-typeable inputs (Salary Payment Mode select, Salary Bank, Bank Branch, Salary A/C No., IFSC Code). KYC shows 10 typeable inputs (PAN, Aadhaar etc.). Employment: 2. Previous Emp: 10. Users can type but backend silently drops — confusing UX and violates security-contract wording of review request.", "selector": "tab-salary_bank, tab-kyc, tab-employment, tab-previous", "priority": "HIGH"},
+      {"component": "EmployeeProfileForm.js 'Request Change' footer button (line 628-638)", "issue": "Uses 3 chained window.prompt() calls instead of shadcn/sonner Dialog. No [role='dialog'] opens. Cannot select which field from the current tab (user has to remember and type the internal field key). Not E2E-testable with Playwright default handlers.", "selector": "[data-testid='request-change-btn']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Employee → My Profile navigation", "issue": "Primary entry point (sidebar) missing. Must fix Layout.js to whitelist 'my_profile' for all non-admin users regardless of granular permissions (or seed user.permissions.my_profile=true).", "affected_selectors": ["[data-testid='nav-my-profile']"]},
+      {"flow": "Change-request Submit", "issue": "window.prompt is blocked by Playwright dialog auto-dismiss; also not accessible / not testable with existing data-testid infrastructure. Replace with proper Dialog + Select (field picker showing protected fields of current tab) + Input + Textarea (reason).", "affected_selectors": ["[data-testid='request-change-btn']"]}
+    ],
+    "design_issues": [
+      {"screen": "My Profile > locked tabs", "issues": ["Lock banner ('This section is view-only') displays correctly but the inputs beneath it look identical to editable inputs — add disabled background styling (e.g., bg-[#F9F6F0] cursor-not-allowed) and add disabled/readonly attributes."]}
+    ]
+  },
+  "passed_tests": [
+    "11/11 existing pytest test_employee_selfservice.py (profile GET, whitelist PUT, protected-field filter, change-request queue, admin approve/reject, audit log)",
+    "11/11 new pytest test_selfservice_security.py: malicious salary/statutory/KYC mutation silently filtered (every protected field unchanged in DB pre/post); no _id leak in /me/employee-profile; unauth gets 401/403 on all /me/* endpoints; editable-field CR rejected with 400; pending CR appears in admin queue; approve applies to profile; reject leaves profile untouched; Priya cannot see Rahul's CRs; non-admin cannot list /employee-change-requests; /me/effective-policies returns all 8 policy keys + approval_hierarchy + sources",
+    "Frontend direct URL /my-profile renders MyProfilePage + EmployeeProfileForm (selfMode=true) with all 13 tabs",
+    "Personal/Contact/Address tabs editable in selfMode (Save My Changes button visible, working inputs)",
+    "Lock banner 'This section is view-only' renders on employment/salary_bank/statutory/kyc/voluntary/previous/hierarchy/assignments",
+    "My Change Requests section renders with PENDING/APPROVED/REJECTED status badges + reason + rejection reason (verified with seeded CRs from security suite)",
+    "Admin-only sidebar items correctly hidden from employee (Organization/Compliance/Policies/Salary/Payroll-Runs/Employees/Departments/Hierarchy all absent)",
+    "Backend login: admin@hrms.com, employee@hrms.com, priya@hrms.com — all 3 succeed"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_employee_selfservice.py",
+    "/app/backend/tests/test_selfservice_security.py",
+    "/app/test_reports/pytest/iter11_selfservice.xml",
+    "/app/test_reports/pytest/iter11_security.xml"
+  ],
+  "action_items": [
+    "HIGH: Fix Layout.js so non-admin users always see 'My Profile' (either remove .filter(hasPermission) on my_profile, or seed user.permissions.my_profile=true for employee/priya). Without this, feature is inaccessible via UI.",
+    "HIGH: In EmployeeProfileForm.js selfMode, add `disabled={selfMode}` (or readonly) to EVERY input/select/textarea rendered inside locked tabs: employment (tab_emp), salary_bank, kyc, previous. The existing canEdit() helper is only applied to a few fields on the Personal tab; it needs to propagate everywhere. Style disabled inputs with cursor-not-allowed.",
+    "MEDIUM: Replace window.prompt() trio in request-change button (line 628-638) with a shadcn Dialog containing: Select (lists protected fields visible in current tab), Input (new value), Textarea (reason), Submit button with data-testid='request-change-submit'. Makes flow testable + accessible.",
+    "LOW: Consider adding admin 'Change Requests' sidebar route so admin can triage pending CRs without opening each employee profile (backend /api/employee-change-requests?status=pending already exists and is used by test).",
+    "LOW: /api/me/documents endpoint mentioned in review-request prompt does not exist — only /api/documents/{employee_id} exists which requires employee_id. If spec demands /me variant, add it so employees don't need to know their own id."
+  ],
+  "critical_code_review_comments": [
+    "EmployeeProfileForm.js (~649 lines) mixes 13 tab bodies, save handlers, policy save, hierarchy save, request-change prompt, all inline — extract each tab into its own component file for readability and selfMode enforcement consistency.",
+    "canEdit() helper (line 69) only gates a handful of fields on Personal tab; subsequent tabs pass raw `disabled={!canEdit(field)}` only sporadically. Centralize: build a `lockedFields` Set from EMPLOYEE_PROTECTED_FIELDS and apply disabled across the whole form when selfMode=true.",
+    "Request-change button uses window.prompt — replace with proper Dialog component; also, currently the user must KNOW the internal field name ('salary_ac_no') which is impossible UX.",
+    "Layout.js line 45 `.filter(item => isAdmin || hasPermission(item.module))` silently hides 'My Profile' when permission key missing. Either hardcode my_profile as always-on for non-admin, or guarantee permission seeding at user creation.",
+    "server.py: EMPLOYEE_PROTECTED_FIELDS (line 656) is good, but the PUT handler could additionally echo back the ignored (filtered) fields in response for frontend to surface 'these fields were ignored, please submit change request'."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_selfservice_security.py (NEW — 11 complementary security/isolation/approval-flow tests)"
+  ],
+  "success_rate": {"backend": "100% (22/22 — 11 existing + 11 new)", "frontend": "40% — My Profile page renders + editable tabs + change-requests list work, BUT entry point (sidebar link) missing, locked-tab inputs not actually disabled, request-change dialog is native prompt (not a proper dialog)"},
+  "test_credentials": "admin@hrms.com/admin123 (login_as=admin), employee@hrms.com/emp123, priya@hrms.com/priya123",
+  "seed_data_creation": "4 change_requests created in DB during security tests (RAHUL5555X pending, APRVD1234X approved, REJECT999X rejected, QUEUE1234X pending) + PAN field on employee@hrms.com now = APRVD1234X (approved CR applied). If needed, clean up via admin UI or mongo.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 10 backend = 22/22 green and security contract is SOUND — backend filters protected fields server-side, unauth blocked, cross-user isolation works, approve/reject audited. The 3 frontend issues are the delta. After main agent fixes Layout.js sidebar + selfMode input-disable propagation + replaces window.prompt with Dialog, re-run a short Playwright script: login as employee@hrms.com → click nav-my-profile → iterate all 13 tabs → assert every input on [employment, salary_bank, statutory, kyc, voluntary, previous, hierarchy, assignments, policies] is input[disabled] or input[readonly] → click request-change-btn on salary_bank → assert [role='dialog'] opens → submit → assert toast.",
+  "rca of the issue": "Layout.js sidebar uses a generic permission filter that doesn't exempt the new 'my_profile' module; employee users created before Phase 10 don't have this permission seeded. EmployeeProfileForm.js selfMode prop is used only to gate the footer Save button visibility and to render lock banners, but individual input rendering inside each tab did not get a uniform disabled={selfMode} wiring (except via canEdit() which covers only Personal-tab protected fields). The bug is cosmetic/UX only — backend filtering prevents any actual security issue."
+}
