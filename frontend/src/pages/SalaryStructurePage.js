@@ -50,6 +50,7 @@ export default function SalaryStructurePage() {
   var [locations, setLocations] = useState([]);
   var [departments, setDepartments] = useState([]);
   var [complianceTpls, setComplianceTpls] = useState({ pf: [], esic: [], pt: [], lwf: [], tds: [] });
+  var [policyTpls, setPolicyTpls] = useState({ leave: [], attendance: [], overtime: [], reimbursement: [], bonus: [], gratuity: [] });
   var [loading, setLoading] = useState(true);
   // Component form
   var [compDialog, setCompDialog] = useState(false);
@@ -77,8 +78,23 @@ export default function SalaryStructurePage() {
       // Fetch statutory templates (for optional auto-calc linking)
       var st = await Promise.all(['pf','esic','pt','lwf','tds'].map(function(t) { return complianceTemplateAPI.getAll(t).catch(function() { return { data: [] }; }); }));
       setComplianceTpls({ pf: st[0].data || [], esic: st[1].data || [], pt: st[2].data || [], lwf: st[3].data || [], tds: st[4].data || [] });
+      // Fetch policy templates (for policy↔salary linking)
+      var pt = await Promise.all(['leave','attendance','overtime','reimbursement','bonus','gratuity'].map(function(t) {
+        return import('../services/api').then(function(m) { return m.policyTemplateAPI.getAll(t).catch(function() { return { data: [] }; }); });
+      }));
+      setPolicyTpls({ leave: pt[0].data || [], attendance: pt[1].data || [], overtime: pt[2].data || [], reimbursement: pt[3].data || [], bonus: pt[4].data || [], gratuity: pt[5].data || [] });
     } catch (e) { /* ok */ }
     setLoading(false);
+  }
+
+  async function seedDefaults() {
+    if (!window.confirm('Install 22 default components (Basic/HRA/DA/Conv, OT 1.5x/2x/3x group, Bonus group, PF/ESIC/PT-MH/PT-TN slabs, LWF, TDS, Loan/Advance EMI, Gratuity provision)? Existing components with matching codes will be skipped.')) return;
+    try {
+      var r = await salaryComponentAPI.seedDefaults(false);
+      toast.success('Seeded: ' + (r.data.created || []).length + ' new, ' + (r.data.skipped_already_exists || []).length + ' skipped');
+      var r2 = await salaryComponentAPI.getAll();
+      setComponents(r2.data || []);
+    } catch (e) { toast.error(e.response?.data?.detail || 'Seed failed'); }
   }
 
   // ─── Components ───
@@ -183,7 +199,9 @@ export default function SalaryStructurePage() {
     <div className="space-y-6" data-testid="salary-structure-page">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div><h1 className="text-3xl font-semibold text-[#2A2624]" style={{ fontFamily: 'Outfit' }}>Salary Structure</h1><p className="text-[#6A625E]" style={{ fontFamily: 'Manrope' }}>Components, templates & assignments</p></div>
-        <Dialog open={assignDialog} onOpenChange={setAssignDialog}>
+        <div className="flex gap-2">
+          <Button variant="outline" className="rounded-xl" onClick={seedDefaults} data-testid="seed-defaults-btn"><Plus size={18} className="mr-2" /> Seed Defaults</Button>
+          <Dialog open={assignDialog} onOpenChange={setAssignDialog}>
           <DialogTrigger asChild><Button variant="outline" className="rounded-xl" data-testid="salary-bulk-assign"><Users size={18} className="mr-2" /> Bulk Assign</Button></DialogTrigger>
           <DialogContent><DialogHeader><DialogTitle>Bulk Assign Salary Template</DialogTitle></DialogHeader>
             <div className="space-y-4">
@@ -195,6 +213,7 @@ export default function SalaryStructurePage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -496,6 +515,30 @@ export default function SalaryStructurePage() {
                 </div>
               )}
               <p className="text-[10px] text-[#A28B7A] mt-2">When on: PF caps at ₹15,000 basic, ESIC applies only if gross ≤ ₹21,000, PT uses state slabs, TDS uses New Regime 2024-25. Link compliance templates to use employee-specific slabs.</p>
+            </div>
+
+            {/* Policy Links — connect this salary template to leave/attendance/overtime/bonus/gratuity/reimbursement policies */}
+            <div className="border border-[#E8E2D9] rounded-xl p-3 mb-3 bg-[#7D9D85]/5">
+              <p className="text-xs font-bold text-[#7D9D85] uppercase mb-2">Policy Links</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {[
+                  { key: 'leave_policy_id', type: 'leave', label: 'Leave Policy' },
+                  { key: 'attendance_policy_id', type: 'attendance', label: 'Attendance Policy' },
+                  { key: 'overtime_policy_id', type: 'overtime', label: 'Overtime Policy' },
+                  { key: 'reimbursement_policy_id', type: 'reimbursement', label: 'Reimbursement Policy' },
+                  { key: 'bonus_policy_id', type: 'bonus', label: 'Bonus Policy' },
+                  { key: 'gratuity_policy_id', type: 'gratuity', label: 'Gratuity Policy' },
+                ].map(function(p) { var list = policyTpls[p.type] || []; return (
+                  <div key={p.key}>
+                    <Label className="text-[10px]">{p.label}</Label>
+                    <Select value={tmplForm[p.key] || ''} onValueChange={function(v) { setTmplForm({...tmplForm, [p.key]: v === 'none' ? '' : v}); }}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Not linked" /></SelectTrigger>
+                      <SelectContent><SelectItem value="none">Not linked</SelectItem>{list.map(function(t) { return <SelectItem key={t.id} value={t.id}>{t.template_name || t.name || 'Unnamed'}</SelectItem>; })}</SelectContent>
+                    </Select>
+                  </div>
+                ); })}
+              </div>
+              <p className="text-[10px] text-[#A28B7A] mt-2">Linked policies drive attendance-based pro-rating (rate_days/earned_days), OT factors, Bonus eligibility and Gratuity rules when Payroll Run executes.</p>
             </div>
 
             {/* Component list */}

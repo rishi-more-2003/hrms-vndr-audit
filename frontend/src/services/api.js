@@ -196,11 +196,13 @@ export const salaryComponentAPI = {
   create: (data) => api.post('/salary-components', data),
   update: (id, data) => api.put(`/salary-components/${id}`, data),
   delete: (id) => api.delete(`/salary-components/${id}`),
+  seedDefaults: (wipe) => api.post('/salary-components/seed-defaults' + (wipe ? '?wipe=true' : '')),
 };
 
 export const salaryTemplateAPI = {
   getAll: () => api.get('/salary-templates'),
   getById: (id) => api.get(`/salary-templates/${id}`),
+  resolvedLinks: (id) => api.get(`/salary-templates/${id}/resolved-links`),
   create: (data) => api.post('/salary-templates', data),
   update: (id, data) => api.put(`/salary-templates/${id}`, data),
   delete: (id) => api.delete(`/salary-templates/${id}`),

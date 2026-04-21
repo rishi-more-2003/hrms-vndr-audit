@@ -13,6 +13,21 @@
 ### Phase 8A — P0 Payroll Completion
 Bonus / Gratuity / Incentive / Advance / Loan calculation engines, Payslip PDF, Monthly Payroll Run, FnF Settlement.
 
+### Phase 8C — Seed Kit + Policy↔Salary Linkage (Feb 21, 2026)
+**Default Component Kit** (`POST /api/salary-components/seed-defaults`, idempotent):
+22 opinionated components showcasing Phase 8B features:
+- Earnings: Basic, DA (10% of Basic), HRA (40%), Conveyance, Special, Medical (attendance-independent)
+- **Overtime group**: OT @ 1.5x / 2x / 3x with embedded `ot_config` (rate_type, factor, hours_per_day)
+- **Bonus group**: Statutory Bonus / Performance Bonus / Festival Bonus
+- Deductions: PF (auto-pair), ESIC (with applicability ≤ ₹21k rate gross), PT-MH (slab + gender differentiation), PT-TN (progressive semi-annual), LWF, TDS, Loan EMI, Advance EMI
+- Provisions: Gratuity (4.81% of Basic), Leave Encashment (2%)
+- UI: "Seed Defaults" button top-right on Salary Structure page.
+
+**Policy ↔ Salary Template Linkage**:
+- Salary template now accepts `leave_policy_id`, `attendance_policy_id`, `overtime_policy_id`, `reimbursement_policy_id`, `bonus_policy_id`, `gratuity_policy_id`.
+- New endpoint `GET /api/salary-templates/{id}/resolved-links` returns the template with fully hydrated policy + compliance link objects.
+- UI: "Policy Links" section inside Create/Edit Salary Template dialog with 6 dropdowns populated from each policy type.
+
 ### Phase 8B — Salary Compute v2 (Feb 21, 2026)
 Major schema + engine overhaul per user's deep-dive requirements:
 

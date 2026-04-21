@@ -20,6 +20,7 @@ from payroll_calc import (
     calculate_statutory_bonus, calculate_gratuity, calculate_incentive,
     calculate_advance_schedule, calculate_loan_emi,
 )
+from default_components import default_component_kit
 from storage import init_storage, put_object, get_object
 
 ROOT_DIR = Path(__file__).parent
@@ -1782,6 +1783,42 @@ AUTO_PAIRS = {
 async def get_salary_components(current_user: dict = Depends(get_current_user)):
     return await db.salary_components.find({}, {"_id": 0}).to_list(1000)
 
+
+@api_router.post("/salary-components/seed-defaults")
+async def seed_default_components(current_user: dict = Depends(get_current_user), wipe: bool = False):
+    """
+    Install the opinionated default component kit (25+ components).
+    Includes: Basic/DA/HRA/Conv/Special, Overtime group (1.5x/2x/3x),
+    Bonus group (statutory/performance/festival), PF/ESIC auto-pair with applicability,
+    PT Maharashtra slab + PT Tamil Nadu slab (Group='Professional Tax'),
+    LWF, TDS, Loan/Advance EMI, Gratuity & Leave-Encashment provisions.
+
+    Query param `wipe=true` clears existing components first.
+    Skips components whose `code` already exists (idempotent).
+    """
+    require_admin(current_user)
+    if wipe:
+        await db.salary_components.delete_many({})
+
+    kit = default_component_kit()
+    existing_codes = {c["code"] for c in await db.salary_components.find({}, {"_id": 0, "code": 1}).to_list(2000) if c.get("code")}
+    created = []
+    skipped = []
+    for comp in kit:
+        if comp["code"] in existing_codes:
+            skipped.append(comp["code"])
+            continue
+        await db.salary_components.insert_one(comp)
+        created.append(comp["code"])
+
+    return {
+        "message": "Default component kit seeded",
+        "created": created,
+        "skipped_already_exists": skipped,
+        "total_kit": len(kit),
+        "wipe_applied": wipe,
+    }
+
 # Default percentages for auto-paired statutory provisions
 AUTO_PAIR_DEFAULTS = {
     "pf_employer_provision": {"label": "PF Employer Contribution", "percentage": 12.0, "calc_type": "percentage_of_basic", "description": "3.67% EPF + 8.33% EPS capped at basic ₹15,000"},
@@ -1856,6 +1893,56 @@ async def get_salary_template(template_id: str, current_user: dict = Depends(get
     if not t:
         raise HTTPException(status_code=404, detail="Template not found")
     return t
+
+
+@api_router.get("/salary-templates/{template_id}/resolved-links")
+async def get_salary_template_links(template_id: str, current_user: dict = Depends(get_current_user)):
+    """Returns the salary template along with all linked policy & compliance templates fully hydrated."""
+    t = await db.salary_templates.find_one({"id": template_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    resolved = {"salary_template": t, "policy_links": {}, "compliance_links": {}}
+    policy_col_map = {
+        "leave": "leave_policy_templates",
+        "attendance": "attendance_policy_templates",
+        "overtime": "overtime_policy_templates",
+        "reimbursement": "reimbursement_policy_templates",
+        "bonus": "bonus_policy_templates",
+        "gratuity": "gratuity_policy_templates",
+    }
+    policy_link_keys = [
+        ("leave_policy_id", "leave"),
+        ("attendance_policy_id", "attendance"),
+        ("overtime_policy_id", "overtime"),
+        ("reimbursement_policy_id", "reimbursement"),
+        ("bonus_policy_id", "bonus"),
+        ("gratuity_policy_id", "gratuity"),
+    ]
+    for key, ptype in policy_link_keys:
+        pid = t.get(key)
+        if pid:
+            col = policy_col_map[ptype]
+            p = await db[col].find_one({"id": pid}, {"_id": 0})
+            if p:
+                resolved["policy_links"][ptype] = p
+
+    # Compliance templates
+    compliance_keys = [
+        ("pf_template_id", "pf_templates"),
+        ("esic_template_id", "esic_templates"),
+        ("pt_template_id", "pt_templates"),
+        ("lwf_template_id", "lwf_templates"),
+        ("tds_template_id", "tds_templates"),
+    ]
+    for key, col in compliance_keys:
+        cid = t.get(key)
+        if cid:
+            c = await db[col].find_one({"id": cid}, {"_id": 0})
+            resolved["compliance_links"][col.replace("_templates", "")] = c
+
+    return resolved
+
 
 @api_router.post("/salary-templates")
 async def create_salary_template(data: dict, current_user: dict = Depends(get_current_user)):
