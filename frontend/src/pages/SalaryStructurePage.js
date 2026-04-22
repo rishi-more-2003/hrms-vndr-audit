@@ -159,6 +159,7 @@ export default function SalaryStructurePage() {
   function setTmplCompField(idx, key, val) { var c = [...tmplForm.components]; c[idx] = {...c[idx], [key]: val}; setTmplForm({...tmplForm, components: c}); }
   async function computeSalary() {
     var active = (tmplForm.components || []).filter(function(c) { return c.enabled; });
+    if (active.length === 0) { toast.error('Enable at least one component (toggle the switch on the left of a component row) before computing.'); return; }
     try {
       var r = await salaryComputeAPI.compute({
         components: active,
@@ -172,7 +173,8 @@ export default function SalaryStructurePage() {
         tds_template_id: tmplForm.tds_template_id || null,
       });
       setComputeResult(r.data);
-    } catch (e) { toast.error('Compute failed'); }
+      toast.success('Computed — scroll down to see the breakdown');
+    } catch (e) { toast.error(e.response?.data?.detail || 'Compute failed'); }
   }
   async function saveTmpl(e) {
     e.preventDefault();
@@ -480,9 +482,10 @@ export default function SalaryStructurePage() {
 
       {/* ─── TEMPLATE DIALOG ─── */}
       <Dialog open={tmplDialog} onOpenChange={setTmplDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden">
-          <DialogHeader><DialogTitle>{editTmplId ? 'Edit' : 'Create'} Salary Template</DialogTitle></DialogHeader>
-          <form onSubmit={saveTmpl}>
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b border-[#E8E2D9]"><DialogTitle>{editTmplId ? 'Edit' : 'Create'} Salary Template</DialogTitle></DialogHeader>
+          <form onSubmit={saveTmpl} className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto px-6 py-4" data-testid="tmpl-dialog-scroll">
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div><Label className="text-xs">Template Name *</Label><Input value={tmplForm.template_name || ''} onChange={function(e) { setTmplForm({...tmplForm, template_name: e.target.value}); }} required /></div>
               <div><Label className="text-xs">Pay Type</Label><Select value={tmplForm.pay_type || 'monthly'} onValueChange={function(v) { setTmplForm({...tmplForm, pay_type: v}); }}><SelectTrigger className="h-9"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="daily">Daily Wage</SelectItem></SelectContent></Select></div>
@@ -542,7 +545,7 @@ export default function SalaryStructurePage() {
             </div>
 
             {/* Component list */}
-            <div className="max-h-[45vh] overflow-y-auto border border-[#E8E2D9] rounded-xl">
+            <div className="border border-[#E8E2D9] rounded-xl">
               {COMP_TYPES.map(function(ct) {
                 var list = (tmplForm.components || []).filter(function(c) { return c.component_type === ct.key; });
                 if (list.length === 0) return null;
@@ -634,7 +637,8 @@ export default function SalaryStructurePage() {
               </div>
             )}
 
-            <Button type="submit" className="w-full bg-[#D96C5B] hover:bg-[#C25949] mt-4">{editTmplId ? 'Update' : 'Create'} Template</Button>
+            <Button type="submit" className="w-full bg-[#D96C5B] hover:bg-[#C25949] mt-4" data-testid="save-template-btn">{editTmplId ? 'Update' : 'Create'} Template</Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>

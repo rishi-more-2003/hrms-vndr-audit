@@ -68,3 +68,6 @@ Headcount, attendance muster, payroll register, PF-ECR, ESIC return, PT, Form 24
 - Slab overlap/gap validation at save-time (salary components).
 - Component code uniqueness across classifications.
 - Payroll Run BackgroundTask for 100+ employees.
+
+## Recent Fixes (Feb 22, 2026)
+- **Salary Template dialog — Compute + scroll bug**: `DialogContent` had `overflow-hidden`, clipping the Compute result + Submit button. Restructured the dialog into a flex column with a scrollable body (`[data-testid="tmpl-dialog-scroll"]` — `flex-1 overflow-y-auto`) and a fixed header. Compute now shows a "scroll down to see the breakdown" success toast, rejects empty component lists with a helpful error, and surfaces backend error details. The Update Template button stays accessible at the bottom of the scroll area. Removed the nested `max-h-[45vh]` on the component list to avoid double-scrollbars.
