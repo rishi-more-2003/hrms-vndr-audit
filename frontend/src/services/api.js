@@ -284,4 +284,39 @@ export const fnfAPI = {
   compute: (data) => api.post('/fnf/compute', data),
 };
 
+// ─── Vendor Audit (admin + contractor shared) ───
+export const vendorAuditAPI = {
+  // contractors
+  listContractors: () => api.get('/vendor-audit/contractors'),
+  getContractor: (id) => api.get(`/vendor-audit/contractors/${id}`),
+  createContractor: (data) => api.post('/vendor-audit/contractors', data),
+  updateContractor: (id, data) => api.put(`/vendor-audit/contractors/${id}`, data),
+  deleteContractor: (id) => api.delete(`/vendor-audit/contractors/${id}`),
+  resetContractorPassword: (id) => api.post(`/vendor-audit/contractors/${id}/reset-password`),
+  // audits
+  listAudits: (contractorId) => api.get('/vendor-audit/audits' + (contractorId ? '?contractor_id=' + contractorId : '')),
+  getAudit: (id) => api.get(`/vendor-audit/audits/${id}`),
+  startAudit: (data, contractorId) => api.post('/vendor-audit/audits/start' + (contractorId ? '?contractor_id=' + contractorId : ''), data),
+  uploadExcel: (id, file) => { const fd = new FormData(); fd.append('file', file); return api.post(`/vendor-audit/audits/${id}/upload-excel`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  uploadPdf: (id, docType, file) => { const fd = new FormData(); fd.append('file', file); fd.append('doc_type', docType); return api.post(`/vendor-audit/audits/${id}/upload-pdf`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  manualOverride: (id, docType, fieldPath, value) => api.put(`/vendor-audit/audits/${id}/manual-override`, { doc_type: docType, field_path: fieldPath, value }),
+  runAudit: (id) => api.post(`/vendor-audit/audits/${id}/run`),
+  submitAudit: (id) => api.post(`/vendor-audit/audits/${id}/submit`),
+  approveAudit: (id, remarks) => api.post(`/vendor-audit/audits/${id}/approve`, { remarks }),
+  rejectAudit: (id, reason) => api.post(`/vendor-audit/audits/${id}/reject`, { reason }),
+  deleteAudit: (id) => api.delete(`/vendor-audit/audits/${id}`),
+  docUrl: (id, docType) => `${API_URL}/vendor-audit/audits/${id}/documents/${docType}`,
+  registerUrl: (id, kind) => `${API_URL}/vendor-audit/audits/${id}/register/${kind}`,
+  templateUrl: () => `${API_URL}/vendor-audit/template/vendor-data-sheet`,
+  schema: () => api.get('/vendor-audit/meta/schema'),
+  dashboardStats: () => api.get('/vendor-audit/dashboard/stats'),
+};
+
+// ─── Contractor portal auth (separate) ───
+export const contractorAPI = {
+  login: (email, password) => api.post('/contractor/auth/login', { email, password }),
+  me: () => api.get('/contractor/auth/me'),
+  changePassword: (data) => api.post('/contractor/auth/change-password', data),
+};
+
 export default api;

@@ -22,6 +22,10 @@ import PolicyPage from './pages/PolicyPage';
 import SalaryStructurePage from './pages/SalaryStructurePage';
 import PayrollRunPage from './pages/PayrollRunPage';
 import MyProfilePage from './pages/MyProfilePage';
+import VendorAuditPage from './pages/VendorAuditPage';
+import AuditRunPage from './pages/AuditRunPage';
+import ContractorLoginPage from './pages/ContractorLoginPage';
+import ContractorDashboardPage from './pages/ContractorDashboardPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -35,7 +39,19 @@ const PrivateRoute = ({ children, requiredModule }) => {
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
-  return user ? <Navigate to="/dashboard" /> : children;
+  if (user) {
+    if (user.role === 'contractor') return <Navigate to="/contractor/dashboard" />;
+    return <Navigate to="/dashboard" />;
+  }
+  return children;
+};
+
+const ContractorRoute = ({ children }) => {
+  const { user, loading, isContractor } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  if (!user) return <Navigate to="/contractor/login" />;
+  if (!isContractor) return <Navigate to="/dashboard" />;
+  return children;
 };
 
 const AdminRoute = ({ children }) => {
@@ -68,6 +84,16 @@ function AppRoutes() {
       <Route path="/recruitment" element={<PrivateRoute requiredModule="recruitment"><Layout><RecruitmentPage /></Layout></PrivateRoute>} />
       <Route path="/performance" element={<PrivateRoute requiredModule="performance"><Layout><PerformancePage /></Layout></PrivateRoute>} />
       <Route path="/onboarding" element={<PrivateRoute requiredModule="onboarding"><Layout><OnboardingPage /></Layout></PrivateRoute>} />
+
+      {/* Vendor Audit — admin */}
+      <Route path="/vendor-audit" element={<AdminRoute><Layout><VendorAuditPage /></Layout></AdminRoute>} />
+      <Route path="/vendor-audit/audits/:id" element={<AdminRoute><Layout><AuditRunPage /></Layout></AdminRoute>} />
+
+      {/* Contractor portal — separate branded experience */}
+      <Route path="/contractor/login" element={<PublicRoute><ContractorLoginPage /></PublicRoute>} />
+      <Route path="/contractor/dashboard" element={<ContractorRoute><ContractorDashboardPage /></ContractorRoute>} />
+      <Route path="/contractor/audits/:id" element={<ContractorRoute><div className="min-h-screen bg-[#FDFBF9] p-6 max-w-6xl mx-auto"><AuditRunPage isContractor={true} /></div></ContractorRoute>} />
+
       <Route path="/" element={<Navigate to="/dashboard" />} />
     </Routes>
   );

@@ -43,6 +43,7 @@ api_router = APIRouter(prefix="/api")
 class UserRole(str, Enum):
     ADMIN = "admin"
     EMPLOYEE = "employee"
+    CONTRACTOR = "contractor"
 
 class LeaveType(str, Enum):
     CASUAL = "casual"
@@ -3653,6 +3654,13 @@ async def compute_fnf(data: dict, current_user: dict = Depends(get_current_user)
 
 # ── Mount ──
 app.include_router(api_router)
+
+# Vendor Audit module
+from vendor_audit.routes import vendor_router, contractor_auth_router
+vendor_api = APIRouter(prefix="/api")
+vendor_api.include_router(vendor_router)
+vendor_api.include_router(contractor_auth_router)
+app.include_router(vendor_api)
 
 app.add_middleware(
     CORSMiddleware,
