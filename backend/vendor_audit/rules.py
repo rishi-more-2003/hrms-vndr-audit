@@ -360,6 +360,9 @@ def run_full_audit(rows: List[Dict[str, Any]], parsed_docs: Dict[str, Dict[str, 
     per_employee: List[Dict[str, Any]] = []
     all_findings: List[Dict[str, Any]] = []
     for row in rows:
+        # Fall back to audit-level wage month if row doesn't carry one (vendor may leave it blank)
+        if not _s(row.get("WAGE MONTH")):
+            row = {**row, "WAGE MONTH": wage_month}
         f = []
         f += audit_pf_employee(row)
         f += audit_esic_employee(row)

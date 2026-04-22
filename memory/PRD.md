@@ -1,73 +1,78 @@
-# HRMS Software — PRD
+# HRMS + Vendor Audit Platform — PRD
 
 ## Architecture
 - Frontend: React 19 + Tailwind + Shadcn/UI + Phosphor Icons
-- Backend: FastAPI + MongoDB (Motor async), Auth: JWT, Storage: Emergent Object Storage, PDF: reportlab
+- Backend: FastAPI + MongoDB (Motor async), Auth: JWT (bcrypt), Storage: Emergent Object Storage, PDF: reportlab + pdfplumber, Excel: openpyxl
+- Three user roles: `admin` (principal employer), `employee`, `contractor` (vendor)
 
-## Implemented (Phases 1 → 10 ✅)
+## Implemented
 
-### Phase 1-3 — Core HRMS, Indian Compliance, Organization & Statutory Compliance
-### Phase 4-5 — Policy Management (10 types) + Enhanced Attendance Policy
-### Phase 6 — Attendance Collection & Management
-### Phase 7 — Salary Structure v1 (components, templates, compute engine)
-### Phase 8A — P0 Payroll Completion
-Bonus / Gratuity / Incentive / Advance / Loan calc engines, Payslip PDF, Monthly Payroll Run, F&F Settlement backend engine.
+### HRMS (Phases 1 → 10 ✅)
+Phase 1-3 — Core HRMS, Indian Compliance, Organization & Statutory Compliance
+Phase 4-5 — Policy Management (10 types) + Enhanced Attendance Policy
+Phase 6 — Attendance Collection & Management
+Phase 7 — Salary Structure v1
+Phase 8A — Payroll Completion (Bonus/Gratuity/Incentive/Advance/Loan + Payslip PDF + Monthly Payroll Run + F&F backend)
+Phase 8B — Salary Compute v2 (Rate/Earned, Applicability, Slabs, Groups)
+Phase 8C — Default Component Kit + Policy ↔ Salary Template Linkage
+Phase 9 — Employee Profile v2 (12 tabs, 100+ fields, bulk upload, document vault, approval hierarchy)
+Phase 10 — Employee Self-Service (my-profile page, field locks, change-request queue with admin approval)
 
-### Phase 8B — Salary Compute v2 (Rate/Earned, Applicability, Slabs, Groups)
-### Phase 8C — Default Component Kit + Policy ↔ Salary Template Linkage
-### Phase 9 — Employee Profile v2 (12 tabs, 100+ fields, bulk upload, documents, approval hierarchy)
+### Vendor Audit v1+v2 ✅ (Apr 22, 2026)
+**Concept**: Principal employers (IT cos) hire contractors for non-core work (Housekeeping/Security/Canteen). Contractor employees work on principal's premises but are on contractor's payroll. Principal is legally responsible for statutory compliance of contractor employees. This module is the automated auditor.
 
-### Phase 10 — Employee Self-Service ✅ (Feb 22, 2026 — VERIFIED GREEN)
+**Backend** (`/app/backend/vendor_audit/`):
+- `models.py` — 179-column `VENDOR_SHEET_COLUMNS`, 7 `PDF_DOC_TYPES`, Pydantic request models
+- `parsers.py` — `parse_vendor_excel()` + 7 PDF parsers (PF ECR, PF Challan, PF Paid Challan, ESIC Contribution History, ESIC Paid Challan, PT Paid Challan, PT Return). Strict text-extraction rejects scanned PDFs.
+- `rules.py` — employee-level rule engine: PF (UAN, cap, EPS, EDLI, 12% check), ESIC (0.75% + threshold), PT Maharashtra (male/female, Feb slab), MLWF (Jun/Dec), Min Wages (state floor), Structure (HRA metro/non-metro, Basic ≥ 50%, net sanity), Payment of Wages (date), Cross-document (ECR ≥ rows, ESIC paid ≥ expected).
+- `registers.py` — PF/ESIC/PT register Excel builders
+- `routes.py` — full CRUD for contractors + audit lifecycle (draft → uploaded → audited → submitted → approved/rejected)
 
-**Backend** (22/22 pytest passing — test_employee_selfservice.py + test_selfservice_security.py):
-- `GET /api/employees/me/profile` — returns full self-profile (no _id leak, all pass-through fields)
-- `PUT /api/employees/me/profile` — whitelist-filtered update (only EMP_EDITABLE fields applied; salary/statutory/KYC silently dropped server-side)
-- `POST /api/employees/me/profile/request-change` — queues a change request
-- `GET /api/employees/me/documents`, `GET /api/employees/me/effective-policies`
-- Admin: `GET /api/employee-change-requests?status=pending`, `PUT /api/employee-change-requests/{id}/approve|reject` with audit log
+**Frontend**:
+- `/vendor-audit` (admin) — contractor CRUD + audit list + stats
+- `/contractor/login` — dark branded portal
+- `/contractor/dashboard` — welcome, establishment info, audit list, change-password
+- `/contractor/audits/:id` + `/vendor-audit/audits/:id` — shared 4-tab audit run page (Upload / Review Extracted / Findings / Registers)
 
-**Frontend** (iteration_12.json — 100% green):
-- `/my-profile` page wraps `EmployeeProfileForm` with `selfMode=true`
-- Sidebar (`Layout.js`) shows "My Profile" for all non-admin users (permission filter now bypasses `my_profile` module)
-- **6 locked tabs** (Employment, Salary & Bank, Statutory, KYC/Identity, Voluntary, Previous Emp) wrapped in `<fieldset disabled={selfMode}>` — HTML5 cascades `:disabled` to every input/select/switch; editable tabs (Personal/Contact/Address) remain interactive.
-- **Request Change** uses a proper shadcn `Dialog` with field-picker Select, Value input, Reason textarea — NO more `window.prompt`. `PROTECTED_FIELDS_BY_TAB` drives the per-tab field options.
-- "My Change Requests" list renders PENDING/APPROVED/REJECTED badges with reasons on the My Profile page.
+**Security**:
+- Contractor JWT scoped — 403 on admin endpoints
+- Contractor can only view/edit own audits
+- HRMS endpoints reject contractor tokens
+- Admin-invite-only contractor creation with temp password (must_change_password flag, mandatory change on first login)
+
+**Testing**: 46/46 pytest passing (27 rule unit tests + 19 e2e integration tests). Full E2E verified: create contractor → contractor login → change password → start audit → upload Excel → upload PDF → review extracted → run audit (rule codes trigger correctly) → download registers → submit → admin approve.
+
+**Supported Laws (phase 1)**:
+- Central: PF (EPF/EPS/EDLI/Admin), ESIC, Minimum Wages Act, Payment of Wages Act
+- State: Maharashtra PT (with Feb slab + half-yearly), Maharashtra LWF
 
 ## Test Credentials
-- Admin: admin@hrms.com / admin123 (login_as: "admin")
-- Employee: employee@hrms.com / emp123 (Rahul)
-- Employee: priya@hrms.com / priya123 (Priya — Rahul's manager)
+See `/app/memory/test_credentials.md`.
 
-## Test coverage
-- Backend: 22/22 self-service tests + 81/81 earlier salary/payroll/profile tests = 103/103 pytest
-- Frontend E2E: iteration_10 (salary v2), iteration_11 (self-service — 3 bugs), iteration_12 (all 3 bugs fixed ✅)
+## Roadmap
 
-## Roadmap (approved — in order)
+### 🔴 P0 — Vendor Audit Phase 3 (polish + scale)
+- More state PT laws (Karnataka, Tamil Nadu, Gujarat, West Bengal, Telangana)
+- More central laws: Bonus Act, Gratuity Act, CLRA
+- Govt-format registers (Form A/B/Muster Roll/Form 5A/Form 32)
+- Professional PDF audit report export
+- Bulk contractor onboarding via CSV
+- PDF parsing refinement per govt template variants
+- Email/SMS for contractor invites (currently credentials shown to admin)
 
-### 🔴 P0 — `server.py` Refactor (3,678 lines, blocker for future modules)
-Split into `/app/backend/routes/` (auth, employees, salary, policies, payroll, attendance, self_service, compliance, documents).
+### 🟠 P0 — HRMS tech debt
+- `server.py` refactor (3,679 lines → `/app/backend/routes/` split)
+- F&F Settlement UI
 
-### 🟠 P0 — Full & Final Settlement UI
-Backend engine exists. Build UI: exit trigger → leave encashment preview → gratuity → notice adjustment → LWF/PT pro-rata → final payslip PDF.
+### 🟡 P1 — HRMS new modules
+- Recruitment / ATS
+- Performance Management (OKRs)
 
-### 🟡 P1 — Recruitment / ATS
-Job posts, candidates, pipeline stages, offer letters.
+### 🟢 P2
+- Reports Module (PF-ECR / Form 24Q / Payroll Register)
+- Dashboard Analytics, Biometric sync, Mobile PWA
+- Slab overlap validation, component-code uniqueness
 
-### 🟡 P1 — Performance Management
-Goals, KRAs/OKRs, 1-on-1s, review cycles.
-
-### 🟢 P2 — Reports Module
-Headcount, attendance muster, payroll register, PF-ECR, ESIC return, PT, Form 24Q in govt formats.
-
-### 🟢 P2 — Dashboard Analytics (charts)
-### 🟢 P2 — Biometric / RFID hardware sync (currently mocked)
-### 🟢 P2 — Mobile / PWA compliance pass
-
-## Known minor code-review notes (non-blocking)
-- EmployeeProfileForm.js now ~720 lines — consider per-tab component split.
-- Slab overlap/gap validation at save-time (salary components).
-- Component code uniqueness across classifications.
-- Payroll Run BackgroundTask for 100+ employees.
-
-## Recent Fixes (Feb 22, 2026)
-- **Salary Template dialog — Compute + scroll bug**: `DialogContent` had `overflow-hidden`, clipping the Compute result + Submit button. Restructured the dialog into a flex column with a scrollable body (`[data-testid="tmpl-dialog-scroll"]` — `flex-1 overflow-y-auto`) and a fixed header. Compute now shows a "scroll down to see the breakdown" success toast, rejects empty component lists with a helpful error, and surfaces backend error details. The Update Template button stays accessible at the bottom of the scroll area. Removed the nested `max-h-[45vh]` on the component list to avoid double-scrollbars.
+## Recent Fixes
+- **Apr 22, 2026** — Salary Template dialog: fixed clipped scroll (`overflow-hidden` → scrollable body) + added compute guard for empty component list.
+- **Apr 22, 2026** — Vendor Audit: `run_full_audit` now falls back to audit-level wage_month when row lacks it (fixes FEB PT slab detection).
