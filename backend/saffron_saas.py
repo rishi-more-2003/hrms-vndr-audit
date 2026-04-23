@@ -22,8 +22,8 @@ db = _client[os.environ["DB_NAME"]]
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-PLATFORM_ADMIN_EMAIL = "founder@saffronservices.in"
-PLATFORM_ADMIN_PASSWORD = "saffron123"  # override via env if needed
+PLATFORM_ADMIN_EMAIL = os.environ.get("PLATFORM_ADMIN_EMAIL", "founder@saffronservices.in")
+PLATFORM_ADMIN_PASSWORD = os.environ.get("PLATFORM_ADMIN_PASSWORD", "saffron123")
 
 MODULES = [
     {"key": "hrms", "label": "HRMS", "price_monthly": 199, "description": "Complete HR management — payroll, attendance, leave, employee self-service", "tagline": "Pay & people, simplified", "icon": "Users"},
