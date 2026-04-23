@@ -3662,6 +3662,13 @@ vendor_api.include_router(vendor_router)
 vendor_api.include_router(contractor_auth_router)
 app.include_router(vendor_api)
 
+# Saffron SaaS — multi-module platform
+from saffron_saas import saas_router, platform_router, ensure_default_org, ensure_platform_admin
+saffron_api = APIRouter(prefix="/api")
+saffron_api.include_router(saas_router)
+saffron_api.include_router(platform_router)
+app.include_router(saffron_api)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -3687,6 +3694,13 @@ async def startup_event():
         start_scheduler(vendor_db)
     except Exception as e:
         logger.warning(f"Vendor audit scheduler not started: {e}")
+    # Seed Saffron platform (idempotent)
+    try:
+        await ensure_default_org()
+        await ensure_platform_admin()
+        logger.info("Saffron platform seeded")
+    except Exception as e:
+        logger.warning(f"Saffron seed failed: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

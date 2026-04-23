@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 14: End-to-end testing of new Saffron Services SaaS scaffolding. Backend 14/14 pytest passing (5 existing test_saffron_saas + 9 new test_saffron_platform_admin covering module/subscription persistence, security gating across all platform-admin endpoints, contact lead persistence, weak-password rejection). Frontend: all 12 surface-area pages render with correct data-testids (landing, /login chooser, 5 branded module logins, /platform-admin/login, /signup, coming-soon pages). Full signup flow verified E2E: created org with only consultancy selected -> JWT minted -> redirected to /consultancy -> coming-soon-consultancy renders. HRMS regression: admin@hrms.com login via /hrms/login -> /dashboard (legacy preserved). Admin login via /register-maker/login -> coming-soon-register_maker (routing correctness). Platform admin portal: founder login works, stats cards render (9 orgs, 7 trial, 2 active, 5 leads), Manage dialog opens with all 5 pa-module-toggle-{key}, pa-status-select, pa-save-org; save PUT succeeds with no error. Leads tab clickable. Security verified: admin@hrms.com token returns 403 on /platform-admin/stats + /organizations + /contact-leads. Default org confirmed to have all 5 modules enabled + subscription_status=active. No blocking bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/platform-admin/contact-leads/{id}", "issue": "Accepts arbitrary `dict` body without Pydantic validation (same pattern as vendor audit manual_override flagged in iter13). Works but loses type safety on the Leads update path."},
+      {"endpoint": "GET /api/platform-admin/organizations", "issue": "No pagination — .to_list(1000). Will degrade once customer count grows. Non-blocking for MVP."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PlatformAdminPage Manage dialog", "issues": ["Uses browser-native <input type=date> for trial_ends_at instead of shadcn Calendar/Popover — inconsistent with rest of app's date pickers (see calendar usage elsewhere). Same for Status/Plan which are native <select> elements rather than shadcn Select components."]},
+      {"screen": "PlatformAdminPage stat cards", "issues": ["Label text ('TotalOrgs', 'Trial', 'Active', 'NewLeads') appears in very faint gray and label is concatenated without space — e.g. 'TotalOrgs' should render 'Total Orgs' and 'NewLeads' -> 'New Leads'. Minor polish item."]},
+      {"screen": "LandingPage / ComingSoonPage", "issues": ["Coming Soon layout is very minimal — centered card on warm gradient. Consider adding branded module-specific iconography (currently all 3 stub modules show identical rocket icon) so Register Maker vs Internal Audit vs Consultancy feel distinct."]}
+    ]
+  },
+  "passed_tests": [
+    "Backend 14/14: test_meta_modules_public, test_contact_lead, test_signup_and_trial (incl. duplicate-email 400), test_platform_admin_login_and_gating, test_me_organization_for_logged_in_admin, test_default_org_has_all_modules_active, test_public_no_auth_required (signup+contact+meta all public), test_list_organizations_has_user_count, test_platform_stats, test_module_toggle_persists (create org w/ hrms only -> PUT enable vendor_audit+consultancy -> GET confirms), test_subscription_update_persists (status trial->active + plan->complete persists), test_security_admin_token_blocked_from_all_platform_admin (403 on /stats, /organizations, /contact-leads), test_signup_weak_password_rejected (422), test_contact_lead_visible_to_platform_admin",
+    "Frontend Landing: data-testid='landing-page' + 5x module-card-{key} + 3x bundle-{key} + contact-form all present",
+    "Frontend /login: module-chooser-page + 5 tiles (chooser-hrms, chooser-vendor_audit, chooser-register_maker, chooser-internal_audit, chooser-consultancy)",
+    "Frontend branded logins: hrms-login-page (warm), vendor_audit-login-page (dark), register_maker-login-page, internal_audit-login-page, consultancy-login-page all render",
+    "Frontend /signup: signup-page + 5x su-module-{key} + su-submit — full form present",
+    "Frontend E2E signup: created org with only consultancy selected -> redirected to /consultancy -> coming-soon-consultancy visible",
+    "Frontend HRMS regression: admin@hrms.com/admin123 at /hrms/login -> /dashboard",
+    "Frontend Register Maker routing: admin login via /register-maker/login -> /register-maker with coming-soon-register_maker visible",
+    "Frontend platform admin: founder login -> platform-admin-page, 9 Manage buttons, Manage dialog shows all 5 toggles + status select + save; save PUT succeeds; Leads tab clickable"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_saffron_saas.py (5 tests — existing, all pass)",
+    "/app/backend/tests/test_saffron_platform_admin.py (NEW — 9 tests, all pass)",
+    "/app/test_reports/pytest/iter14_saas_full.xml (junit XML — 14/14)"
+  ],
+  "action_items": [
+    "(Polish) Fix stat-card labels on PlatformAdminPage — add spaces: 'Total Orgs', 'New Leads'. Currently render as 'TotalOrgs' and 'NewLeads'.",
+    "(Polish) Replace browser-native <input type=date> + <select> in PlatformAdminPage Manage dialog with shadcn Calendar/Popover + Select for visual consistency.",
+    "(Polish) Give each Coming Soon module its own icon — currently all three (Register Maker, Internal Audit, Consultancy) show identical rocket.",
+    "(Future) Add pagination to GET /api/platform-admin/organizations and /contact-leads before onboarding real customers at scale.",
+    "(Future) Add Pydantic model for PUT /api/platform-admin/contact-leads/{id} body instead of raw dict."
+  ],
+  "critical_code_review_comments": [
+    "saffron_saas.py opens its own AsyncIOMotorClient (line 19) — same duplicate-pool pattern as vendor_audit/routes.py flagged in iter13. Consider consolidating to server.py's client.",
+    "saffron_saas.py:ensure_default_org() updates users/employees/contractors via $exists:false filter — idempotent & safe. Good. But it doesn't backfill documents that were once stamped with a different/stale org_id; if ever needed, a migration would be required.",
+    "Signup trial_ends_at stored as ISO string; my_org() parses with fromisoformat + Z-replace — works but fragile. Consider storing as BSON datetime.",
+    "PLATFORM_ADMIN_PASSWORD hardcoded as 'saffron123' — for prod, must be overridden via env before deployment. Currently loaded as module constant, not env; the comment says 'override via env' but actual code does NOT read os.environ. Recommend: PLATFORM_ADMIN_PASSWORD = os.environ.get('PLATFORM_ADMIN_PASSWORD', 'saffron123').",
+    "module toggle PUT merges into org['modules'] via spread — good, partial updates preserved. However, typo in body.modules (e.g., 'vendoraudit' instead of 'vendor_audit') is silently written; no enum validation against MODULES list.",
+    "SignupRequest allows selected_modules=[] (empty list) → modules_map with all False → org created but no module enabled. Edge case — user with empty selection has no accessible modules post-signup. Consider requiring at least 1 module or defaulting to all when empty."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_saffron_platform_admin.py (NEW — 9 persistence+security tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% on all 12 tested SaaS surfaces + E2E signup + HRMS regression + platform admin management"},
+  "test_credentials": "Platform admin: founder@saffronservices.in / saffron123 (working). HRMS admin: admin@hrms.com / admin123 (working, redirects /hrms/login -> /dashboard). Self-serve signup: unique emails like trialui_<ts>@example.com, 8+ char passwords.",
+  "seed_data_creation": "Each pytest run creates ~4 disposable orgs (via /saas/signup with unique test emails) — ToggleCo, SubCo, Public NoAuthCo, and 1 from test_signup_and_trial. None are cleaned up (no admin delete-org endpoint exists). UI test created 1 more org 'TrialUI Co trialui_<ts>'. Suggest cleanup query: db.organizations.delete_many({source: 'self-serve', contact_email: {$regex: '@(test|example)\\.com$'}}) + db.users.delete_many({email: {$regex: '@(test|example)\\.com$'}}).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Saffron SaaS scaffolding is GREEN end-to-end. Backend (14/14) + frontend (all testids + E2E signup + platform admin CRUD + HRMS regression) all pass. Known polish items (non-blocking): stat-card label spacing, native date/select inputs in Manage dialog, identical rocket icon for 3 coming-soon modules. Platform admin portal fully wired: PUT /modules and PUT /subscription both persist correctly. The 5 branded login pages ALL accept admin@hrms.com (default org has all modules enabled) and redirect to module-appropriate destinations (hrms->/dashboard, vendor_audit->/vendor-audit, register_maker/internal_audit/consultancy->coming-soon page). Signup redirect logic picks first-selected-module (verified: only-consultancy -> /consultancy). Did NOT test: trial_expired gating (no expired orgs exist in DB), contact form E2E submit from landing UI (backend /saas/contact endpoint IS verified). Did NOT test end-to-end: new-signup-user logging out and logging in again via /hrms/login (should work since they have hrms module enabled if selected). PLATFORM_ADMIN_PASSWORD hardcoded in saffron_saas.py line 26 — flagged as critical code review for prod.",
+  "rca of the issue": "No bugs found. All 12 features in review_request verified working end-to-end."
+}

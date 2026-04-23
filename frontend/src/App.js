@@ -26,6 +26,12 @@ import VendorAuditPage from './pages/VendorAuditPage';
 import AuditRunPage from './pages/AuditRunPage';
 import ContractorLoginPage from './pages/ContractorLoginPage';
 import ContractorDashboardPage from './pages/ContractorDashboardPage';
+import LandingPage from './pages/LandingPage';
+import SignupPage from './pages/SignupPage';
+import ModuleChooserPage from './pages/ModuleChooserPage';
+import ModuleLoginPage from './pages/ModuleLoginPage';
+import ComingSoonPage from './pages/ComingSoonPage';
+import PlatformAdminPage, { PlatformAdminLoginPage } from './pages/PlatformAdminPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -41,8 +47,17 @@ const PublicRoute = ({ children }) => {
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
   if (user) {
     if (user.role === 'contractor') return <Navigate to="/contractor/dashboard" />;
+    if (user.role === 'platform_admin') return <Navigate to="/platform-admin" />;
     return <Navigate to="/dashboard" />;
   }
+  return children;
+};
+
+const PlatformAdminRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  if (!user) return <Navigate to="/platform-admin/login" />;
+  if (user.role !== 'platform_admin') return <Navigate to="/" />;
   return children;
 };
 
@@ -94,7 +109,24 @@ function AppRoutes() {
       <Route path="/contractor/dashboard" element={<ContractorRoute><ContractorDashboardPage /></ContractorRoute>} />
       <Route path="/contractor/audits/:id" element={<ContractorRoute><div className="min-h-screen bg-[#FDFBF9] p-6 max-w-6xl mx-auto"><AuditRunPage isContractor={true} /></div></ContractorRoute>} />
 
-      <Route path="/" element={<Navigate to="/dashboard" />} />
+      {/* Saffron Services — SaaS landing + signup + branded module logins */}
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/login" element={<ModuleChooserPage />} />
+      <Route path="/hrms/login" element={<PublicRoute><ModuleLoginPage moduleKey="hrms" /></PublicRoute>} />
+      <Route path="/vendor-audit/login" element={<PublicRoute><ModuleLoginPage moduleKey="vendor_audit" /></PublicRoute>} />
+      <Route path="/register-maker/login" element={<PublicRoute><ModuleLoginPage moduleKey="register_maker" /></PublicRoute>} />
+      <Route path="/internal-audit/login" element={<PublicRoute><ModuleLoginPage moduleKey="internal_audit" /></PublicRoute>} />
+      <Route path="/consultancy/login" element={<PublicRoute><ModuleLoginPage moduleKey="consultancy" /></PublicRoute>} />
+
+      {/* Coming-soon stubs */}
+      <Route path="/register-maker" element={<AdminRoute><ComingSoonPage moduleKey="register_maker" label="Register Maker" tagline="Auto-generate statutory registers across central + state labour laws from a single Excel upload." /></AdminRoute>} />
+      <Route path="/internal-audit" element={<AdminRoute><ComingSoonPage moduleKey="internal_audit" label="Internal Labour Audit" tagline="Continuously self-audit your own payroll & statutory compliance against evolving rules." /></AdminRoute>} />
+      <Route path="/consultancy" element={<AdminRoute><ComingSoonPage moduleKey="consultancy" label="Consultancy Desk" tagline="Raise tickets with our labour-law consultants, track resolution, and keep every document in one vault." /></AdminRoute>} />
+
+      {/* Platform admin */}
+      <Route path="/platform-admin/login" element={<PublicRoute><PlatformAdminLoginPage /></PublicRoute>} />
+      <Route path="/platform-admin" element={<PlatformAdminRoute><PlatformAdminPage /></PlatformAdminRoute>} />
     </Routes>
   );
 }

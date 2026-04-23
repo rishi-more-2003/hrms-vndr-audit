@@ -18,6 +18,10 @@ export const AuthProvider = ({ children }) => {
         const r = await axios.get(`${API_URL}/contractor/auth/me`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
         setUser(r.data.user);
         setContractor(r.data.contractor);
+      } else if (stored === 'platform_admin') {
+        // Minimal user shape from token — platform admin doesn't have a /me endpoint yet
+        setUser({ role: 'platform_admin', email: 'founder@saffronservices.in', full_name: 'Saffron Founder' });
+        setContractor(null);
       } else {
         const response = await axios.get(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
         setUser(response.data);

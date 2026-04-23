@@ -332,4 +332,22 @@ export const contractorAPI = {
   changePassword: (data) => api.post('/contractor/auth/change-password', data),
 };
 
+// ─── Saffron SaaS (multi-module platform) ───
+export const saasAPI = {
+  getMeta: () => api.get('/saas/meta/modules'),
+  submitContact: (data) => api.post('/saas/contact', data),
+  signup: (data) => api.post('/saas/signup', data),
+  myOrg: () => api.get('/saas/me/organization'),
+};
+
+export const platformAdminAPI = {
+  login: (email, password) => api.post('/platform-admin/auth/login', { email, password }),
+  listOrgs: () => api.get('/platform-admin/organizations'),
+  updateModules: (orgId, modules) => api.put(`/platform-admin/organizations/${orgId}/modules`, { modules }),
+  updateSubscription: (orgId, data) => api.put(`/platform-admin/organizations/${orgId}/subscription`, data),
+  listLeads: () => api.get('/platform-admin/contact-leads'),
+  updateLead: (leadId, data) => api.put(`/platform-admin/contact-leads/${leadId}`, data),
+  stats: () => api.get('/platform-admin/stats'),
+};
+
 export default api;
