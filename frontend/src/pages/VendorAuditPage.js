@@ -7,7 +7,9 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Buildings, Plus, Key, Trash, PencilSimple, ShieldCheck, FileText, ClockClockwise, CheckCircle, XCircle } from '@phosphor-icons/react';
+import { Buildings, Plus, Key, Trash, PencilSimple, ShieldCheck, FileText, ClockClockwise, CheckCircle, XCircle, Calendar, Envelope, Eye, UserSwitch } from '@phosphor-icons/react';
+import ScheduleEditorDialog from '../components/ScheduleEditorDialog';
+import EmailOutboxPanel from '../components/EmailOutboxPanel';
 
 const STATUS_STYLES = {
   draft: 'bg-[#A28B7A]/15 text-[#A28B7A]',
@@ -35,6 +37,8 @@ export default function VendorAuditPage() {
   const [startMonth, setStartMonth] = useState('');
 
   const [credDialog, setCredDialog] = useState(null); // {email, temp_password}
+  const [scheduleFor, setScheduleFor] = useState(null); // contractor
+  const [impConfirm, setImpConfirm] = useState(null); // {contractor}
 
   useEffect(() => { fetchAll(); }, []);
   async function fetchAll() {
@@ -85,6 +89,28 @@ export default function VendorAuditPage() {
     catch (e) { toast.error('Failed'); }
   }
 
+  async function openPreview(c) {
+    try {
+      const r = await vendorAuditAPI.previewSession(c.id);
+      const { access_token } = r.data;
+      // Open in new tab using URL hash handoff
+      const url = `${window.location.origin}/contractor/dashboard#impersonate=${encodeURIComponent(access_token)}&mode=preview&from=${encodeURIComponent(c.name)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success('Preview session opened in new tab (read-only, 30 min)');
+    } catch (e) { toast.error(e.response?.data?.detail || 'Failed'); }
+  }
+
+  async function doImpersonate(c) {
+    try {
+      const r = await vendorAuditAPI.impersonateSession(c.id);
+      const { access_token } = r.data;
+      const url = `${window.location.origin}/contractor/dashboard#impersonate=${encodeURIComponent(access_token)}&mode=impersonate&from=${encodeURIComponent(c.name)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      toast.success('Impersonation session opened. Logged to audit trail.');
+      setImpConfirm(null);
+    } catch (e) { toast.error(e.response?.data?.detail || 'Failed'); }
+  }
+
   async function startAudit() {
     if (!startCtr || !startMonth) { toast.error('Select contractor and wage month'); return; }
     try {
@@ -118,10 +144,10 @@ export default function VendorAuditPage() {
         </div>
       )}
 
-      <div className="flex gap-1 border-b border-[#E8E2D9]">
-        {[['audits','Audits'],['contractors','Contractors']].map(([k, label]) => (
+      <div className="flex gap-1 border-b border-[#E8E2D9] overflow-x-auto">
+        {[['audits','Audits'],['contractors','Contractors'],['outbox','Email Outbox']].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`tab-${k}`}
-                  className={`px-4 py-2 text-sm font-medium rounded-t-lg ${tab === k ? 'bg-[#D96C5B] text-white' : 'bg-[#F9F6F0] text-[#6A625E]'}`}>
+                  className={`px-4 py-2 text-sm font-medium rounded-t-lg whitespace-nowrap ${tab === k ? 'bg-[#D96C5B] text-white' : 'bg-[#F9F6F0] text-[#6A625E]'}`}>
             {label}
           </button>
         ))}
@@ -140,6 +166,9 @@ export default function VendorAuditPage() {
                 </div>
               </div>
               <div className="flex gap-1">
+                <Button size="sm" variant="ghost" onClick={() => setScheduleFor(c)} title="Audit schedule" data-testid={`schedule-btn-${c.id}`}><Calendar size={16} /></Button>
+                <Button size="sm" variant="ghost" onClick={() => openPreview(c)} title="Preview as contractor (read-only)" data-testid={`preview-btn-${c.id}`}><Eye size={16} /></Button>
+                <Button size="sm" variant="ghost" onClick={() => setImpConfirm({ contractor: c })} title="Impersonate (full access, logged)" className="text-[#E8B25C]" data-testid={`impersonate-btn-${c.id}`}><UserSwitch size={16} /></Button>
                 <Button size="sm" variant="ghost" onClick={() => openEditContractor(c)} title="Edit"><PencilSimple size={16} /></Button>
                 <Button size="sm" variant="ghost" onClick={() => resetPw(c)} title="Reset password"><Key size={16} /></Button>
                 <Button size="sm" variant="ghost" onClick={() => delContractor(c)} className="text-[#D96C5B]" title="Delete"><Trash size={16} /></Button>
@@ -148,6 +177,8 @@ export default function VendorAuditPage() {
           ))}
         </div>
       )}
+
+      {tab === 'outbox' && <EmailOutboxPanel />}
 
       {tab === 'audits' && (
         <div className="space-y-2" data-testid="audits-list">
@@ -246,6 +277,27 @@ export default function VendorAuditPage() {
             <Button onClick={() => { navigator.clipboard.writeText(`Portal: ${window.location.origin}/contractor/login\nEmail: ${credDialog.email}\nPassword: ${credDialog.temp_password}`); toast.success('Copied'); }} variant="outline" className="w-full">Copy to clipboard</Button>
           </div>
           <DialogFooter><Button onClick={() => setCredDialog(null)}>Done</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule editor */}
+      {scheduleFor && <ScheduleEditorDialog contractor={scheduleFor} open={!!scheduleFor} onClose={() => setScheduleFor(null)} />}
+
+      {/* Impersonate confirmation */}
+      <Dialog open={!!impConfirm} onOpenChange={() => setImpConfirm(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Impersonate {impConfirm?.contractor?.name}?</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="bg-[#E8B25C]/10 border border-[#E8B25C]/20 rounded-lg p-3">
+              <p className="font-semibold text-[#B8841F]">⚠️ Full-access session</p>
+              <p className="text-xs text-[#6A625E] mt-1">Impersonation grants you complete write access as this contractor (upload, submit, everything). This will be recorded in the impersonation audit log. Use for support scenarios only. Session expires in 30 minutes.</p>
+            </div>
+            <p className="text-xs text-[#A28B7A]">For read-only inspection, use the Preview button instead.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImpConfirm(null)}>Cancel</Button>
+            <Button onClick={() => doImpersonate(impConfirm.contractor)} className="bg-[#E8B25C] hover:bg-[#D6A04B] text-[#2A2624]" data-testid="confirm-impersonate">Proceed to Impersonate</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

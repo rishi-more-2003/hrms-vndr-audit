@@ -19,7 +19,7 @@ const STATUS_STYLES = {
 };
 
 export default function ContractorDashboardPage() {
-  const { user, contractor, logout } = useAuth();
+  const { user, contractor, logout, impersonationMode, impersonationFrom } = useAuth();
   const nav = useNavigate();
   const [audits, setAudits] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +60,15 @@ export default function ContractorDashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#FDFBF9]" data-testid="contractor-dashboard">
+      {impersonationMode && (
+        <div className={`px-6 py-2 text-sm flex items-center justify-between ${impersonationMode === 'preview' ? 'bg-[#5A7BA8] text-white' : 'bg-[#E8B25C] text-[#2A2624]'}`} data-testid="impersonation-banner">
+          <span>
+            {impersonationMode === 'preview' ? '👁 PREVIEW MODE — read-only view of' : '⚠️ IMPERSONATION MODE — full access as'} <b>{impersonationFrom || contractor?.name || 'contractor'}</b>
+            <span className="ml-2 opacity-80 text-xs">Session auto-expires in 30 min.</span>
+          </span>
+          <button onClick={doLogout} className="text-xs underline hover:no-underline" data-testid="exit-impersonation-btn">Exit to admin</button>
+        </div>
+      )}
       {/* Topbar */}
       <header className="bg-[#2A2624] text-white px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">

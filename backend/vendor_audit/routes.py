@@ -21,6 +21,8 @@ from .models import (
 from .parsers import parse_vendor_excel, build_template_xlsx, DOC_PARSERS
 from .rules import run_full_audit
 from .registers import build_pf_register, build_esic_register, build_pt_register
+from .email_service import send_email, tmpl_welcome
+from .scheduler import process_windows
 
 
 # ── Shared deps (Mongo, auth) — re-use server-level connection ──
@@ -56,9 +58,17 @@ async def get_user(credentials: HTTPAuthorizationCredentials = Depends(security)
         user = await db.users.find_one({"id": uid}, {"_id": 0, "password": 0})
         if not user:
             raise HTTPException(401, "User not found")
+        # Stamp session flags from JWT (preview/impersonate)
+        user["_preview"] = bool(payload.get("preview"))
+        user["_impersonated_by"] = payload.get("impersonated_by")
         return user
     except Exception:
         raise HTTPException(401, "Invalid token")
+
+
+def block_if_preview(u):
+    if u.get("_preview"):
+        raise HTTPException(403, "Preview mode is read-only. Use Impersonate mode to perform actions on behalf of the contractor.")
 
 
 def require_admin(u):
@@ -149,7 +159,13 @@ async def create_contractor(body: ContractorCreate, u=Depends(get_user)):
     c["created_by"] = u["id"]
     await db.contractors.insert_one(c)
     c.pop("_id", None)
+    # Fire-and-forget welcome email via outbox pattern
+    portal_url = os.environ.get("PUBLIC_URL", "https://talent-board-14.preview.emergentagent.com") + "/contractor/login"
+    t = tmpl_welcome(body.contact_person or body.name, body.contact_email, temp_password, portal_url)
+    email_record = await send_email(db, body.contact_email, t["subject"], t["html"], body_text=t["text"],
+                                    kind="welcome", meta={"contractor_id": contractor_id})
     return {"contractor": c, "temp_password": temp_password,
+            "email_status": email_record.get("status"),
             "message": f"Share these credentials with the contractor: email={body.contact_email}, password={temp_password}"}
 
 
@@ -239,6 +255,7 @@ async def _resolve_contractor(u, contractor_id: Optional[str] = None) -> dict:
 
 @vendor_router.post("/audits/start")
 async def start_audit(body: AuditStartRequest, contractor_id: Optional[str] = None, u=Depends(get_user)):
+    block_if_preview(u)
     c = await _resolve_contractor(u, contractor_id)
     audit_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -284,6 +301,7 @@ async def get_audit(audit_id: str, u=Depends(get_user)):
 
 @vendor_router.post("/audits/{audit_id}/upload-excel")
 async def upload_excel(audit_id: str, file: UploadFile = File(...), u=Depends(get_user)):
+    block_if_preview(u)
     a = await _load_audit(audit_id, u)
     content = await file.read()
     if not file.filename.lower().endswith((".xlsx", ".xls")):
@@ -305,6 +323,7 @@ async def upload_excel(audit_id: str, file: UploadFile = File(...), u=Depends(ge
 
 @vendor_router.post("/audits/{audit_id}/upload-pdf")
 async def upload_pdf(audit_id: str, doc_type: str = Form(...), file: UploadFile = File(...), u=Depends(get_user)):
+    block_if_preview(u)
     a = await _load_audit(audit_id, u)
     if doc_type not in DOC_PARSERS:
         raise HTTPException(400, f"Unknown doc_type. Must be one of: {list(DOC_PARSERS.keys())}")
@@ -353,6 +372,7 @@ async def manual_override(audit_id: str, body: dict, u=Depends(get_user)):
 
 @vendor_router.post("/audits/{audit_id}/run")
 async def run_audit(audit_id: str, u=Depends(get_user)):
+    block_if_preview(u)
     a = await _load_audit(audit_id, u)
     rows = a.get("rows", [])
     if not rows:
@@ -381,6 +401,7 @@ async def run_audit(audit_id: str, u=Depends(get_user)):
 @vendor_router.post("/audits/{audit_id}/submit")
 async def submit_audit(audit_id: str, u=Depends(get_user)):
     """Contractor submits for admin review after running audit."""
+    block_if_preview(u)
     a = await _load_audit(audit_id, u)
     if not a.get("audit_result"):
         raise HTTPException(400, "Run audit first before submitting")
@@ -479,3 +500,159 @@ async def dashboard_stats(u=Depends(get_user)):
     return {
         "total_audits": total, "by_status": by_status, "contractors_count": contractors_count,
     }
+
+
+# ══════════════════════════ PREVIEW / IMPERSONATE ══════════════════════════
+from datetime import timedelta
+
+
+def _mint_session_token(user_id: str, role: str, *, preview: bool = False, impersonated_by: Optional[str] = None, ttl_min: int = 30) -> str:
+    payload = {
+        "sub": user_id, "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ttl_min),
+    }
+    if preview: payload["preview"] = True
+    if impersonated_by: payload["impersonated_by"] = impersonated_by
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+@vendor_router.post("/contractors/{contractor_id}/preview-session")
+async def preview_session(contractor_id: str, u=Depends(get_user)):
+    """Admin-only. Returns a SHORT-LIVED contractor token with `preview:true` claim (read-only)."""
+    require_admin(u)
+    c = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    if not c: raise HTTPException(404, "Contractor not found")
+    token = _mint_session_token(c["user_id"], "contractor", preview=True, impersonated_by=u["id"], ttl_min=30)
+    await db.impersonation_log.insert_one({
+        "id": str(uuid.uuid4()), "kind": "preview", "admin_id": u["id"], "admin_email": u["email"],
+        "contractor_id": contractor_id, "contractor_email": c["contact_email"],
+        "created_at": datetime.now(timezone.utc).isoformat(), "ttl_min": 30,
+    })
+    user = await db.users.find_one({"id": c["user_id"]}, {"_id": 0, "password": 0})
+    return {"access_token": token, "token_type": "bearer", "mode": "preview", "ttl_min": 30, "user": user, "contractor": c}
+
+
+@vendor_router.post("/contractors/{contractor_id}/impersonate-session")
+async def impersonate_session(contractor_id: str, u=Depends(get_user)):
+    """Admin-only. Returns a SHORT-LIVED contractor token WITHOUT preview flag. Full write access.
+    Writes an audit-trail record. Should be used for support / help-desk scenarios only."""
+    require_admin(u)
+    c = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    if not c: raise HTTPException(404, "Contractor not found")
+    token = _mint_session_token(c["user_id"], "contractor", preview=False, impersonated_by=u["id"], ttl_min=30)
+    await db.impersonation_log.insert_one({
+        "id": str(uuid.uuid4()), "kind": "impersonate", "admin_id": u["id"], "admin_email": u["email"],
+        "contractor_id": contractor_id, "contractor_email": c["contact_email"],
+        "created_at": datetime.now(timezone.utc).isoformat(), "ttl_min": 30,
+    })
+    user = await db.users.find_one({"id": c["user_id"]}, {"_id": 0, "password": 0})
+    return {"access_token": token, "token_type": "bearer", "mode": "impersonate", "ttl_min": 30, "user": user, "contractor": c}
+
+
+@vendor_router.get("/impersonation-log")
+async def impersonation_log(u=Depends(get_user)):
+    require_admin(u)
+    logs = await db.impersonation_log.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return logs
+
+
+# ══════════════════════════ AUDIT SCHEDULES ══════════════════════════
+from pydantic import BaseModel as _BM
+
+
+class ScheduleItem(_BM):
+    wage_month: str  # e.g. "JAN-2026"
+    window_open_date: str  # YYYY-MM-DD
+    window_close_date: str  # YYYY-MM-DD
+
+
+class ScheduleBulkRequest(_BM):
+    schedules: List[ScheduleItem]
+
+
+@vendor_router.get("/contractors/{contractor_id}/schedules")
+async def list_schedules(contractor_id: str, u=Depends(get_user)):
+    if u.get("role") == "contractor":
+        c = await contractor_for(u)
+        if c["id"] != contractor_id:
+            raise HTTPException(403, "Not your schedule")
+    else:
+        require_admin(u)
+    data = await db.audit_schedules.find({"contractor_id": contractor_id}, {"_id": 0}).sort("window_open_date", 1).to_list(500)
+    return data
+
+
+@vendor_router.put("/contractors/{contractor_id}/schedules")
+async def upsert_schedules(contractor_id: str, body: ScheduleBulkRequest, u=Depends(get_user)):
+    require_admin(u)
+    c = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    if not c: raise HTTPException(404, "Contractor not found")
+    result = {"inserted": 0, "updated": 0}
+    now = datetime.now(timezone.utc).isoformat()
+    for s in body.schedules:
+        existing = await db.audit_schedules.find_one({"contractor_id": contractor_id, "wage_month": s.wage_month})
+        if existing:
+            # Don't overwrite completed windows
+            if existing.get("status") in ("open", "closed"):
+                continue
+            await db.audit_schedules.update_one(
+                {"id": existing["id"]},
+                {"$set": {"window_open_date": s.window_open_date, "window_close_date": s.window_close_date, "updated_at": now}},
+            )
+            result["updated"] += 1
+        else:
+            await db.audit_schedules.insert_one({
+                "id": str(uuid.uuid4()), "contractor_id": contractor_id,
+                "wage_month": s.wage_month.upper(),
+                "window_open_date": s.window_open_date, "window_close_date": s.window_close_date,
+                "status": "scheduled", "created_at": now, "created_by": u["id"],
+            })
+            result["inserted"] += 1
+    return result
+
+
+@vendor_router.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str, u=Depends(get_user)):
+    require_admin(u)
+    sch = await db.audit_schedules.find_one({"id": schedule_id}, {"_id": 0})
+    if not sch: raise HTTPException(404, "Not found")
+    if sch.get("status") in ("open", "closed"):
+        raise HTTPException(400, "Cannot delete an open or closed window")
+    await db.audit_schedules.delete_one({"id": schedule_id})
+    return {"ok": True}
+
+
+@vendor_router.post("/scheduler/run-now")
+async def scheduler_run_now(u=Depends(get_user)):
+    """Admin button to manually trigger the daily scheduler (also used by tests)."""
+    require_admin(u)
+    return await process_windows(db)
+
+
+# ══════════════════════════ EMAIL OUTBOX ══════════════════════════
+@vendor_router.get("/email-outbox")
+async def list_outbox(contractor_id: Optional[str] = None, kind: Optional[str] = None, u=Depends(get_user)):
+    require_admin(u)
+    q = {}
+    if contractor_id: q["meta.contractor_id"] = contractor_id
+    if kind: q["kind"] = kind
+    data = await db.email_outbox.find(q, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    return data
+
+
+@vendor_router.get("/email-outbox/{email_id}")
+async def get_outbox_email(email_id: str, u=Depends(get_user)):
+    require_admin(u)
+    e = await db.email_outbox.find_one({"id": email_id}, {"_id": 0})
+    if not e: raise HTTPException(404, "Not found")
+    return e
+
+
+@vendor_router.post("/email-outbox/{email_id}/retry")
+async def retry_email(email_id: str, u=Depends(get_user)):
+    require_admin(u)
+    e = await db.email_outbox.find_one({"id": email_id}, {"_id": 0})
+    if not e: raise HTTPException(404, "Not found")
+    # Re-enqueue by calling send_email again with same body
+    new_record = await send_email(db, e["to"], e["subject"], e["body_html"], body_text=e.get("body_text"), kind=e["kind"], meta=e.get("meta", {}))
+    return new_record

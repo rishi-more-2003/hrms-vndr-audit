@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Upload, FileText, CheckCircle, Warning, PencilSimple, Download, ArrowLeft, Play,
   PaperPlaneTilt, CheckSquare, XCircle, Table, Buildings, ShieldCheck, Info,
@@ -31,6 +32,7 @@ const SEV_STYLES = {
 };
 
 export default function AuditRunPage({ isContractor = false }) {
+  const { impersonationMode } = useAuth();
   const { id } = useParams();
   const nav = useNavigate();
   const [audit, setAudit] = useState(null);
@@ -103,7 +105,7 @@ export default function AuditRunPage({ isContractor = false }) {
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-[#6A625E]">Loading audit...</p></div>;
   if (!audit) return <div className="text-center py-12"><p className="text-[#D96C5B]">Audit not found</p></div>;
 
-  const locked = ['submitted','approved','rejected'].includes(audit.status);
+  const locked = ['submitted','approved','rejected'].includes(audit.status) || impersonationMode === 'preview';
   const result = audit.audit_result;
   const docs = audit.documents || {};
   const parsed = audit.parsed_documents || {};

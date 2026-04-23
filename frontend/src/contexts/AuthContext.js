@@ -31,6 +31,21 @@ export const AuthProvider = ({ children }) => {
   }, [API_URL]);
 
   useEffect(() => {
+    // Pickup impersonation/preview token from URL hash
+    if (window.location.hash.includes('impersonate=')) {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const imp = params.get('impersonate');
+      const mode = params.get('mode') || 'preview';
+      const from = params.get('from') || '';
+      if (imp) {
+        localStorage.setItem('token', imp);
+        localStorage.setItem('auth_role', 'contractor');
+        localStorage.setItem('impersonation_mode', mode);
+        localStorage.setItem('impersonation_from', from);
+        setToken(imp);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
     if (token) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       fetchCurrentUser();
@@ -74,12 +89,16 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('auth_role');
+    localStorage.removeItem('impersonation_mode');
+    localStorage.removeItem('impersonation_from');
     setToken(null);
     setUser(null);
     setContractor(null);
     delete axios.defaults.headers.common['Authorization'];
   };
 
+  const impersonationMode = localStorage.getItem('impersonation_mode'); // 'preview' | 'impersonate' | null
+  const impersonationFrom = localStorage.getItem('impersonation_from');
   const isAdmin = user?.role === 'admin';
   const isContractor = user?.role === 'contractor';
   const hasPermission = (module) => {
@@ -88,7 +107,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, contractor, loading, login, contractorLogin, logout, token, isAdmin, isContractor, hasPermission }}>
+    <AuthContext.Provider value={{ user, contractor, loading, login, contractorLogin, logout, token, isAdmin, isContractor, hasPermission, impersonationMode, impersonationFrom }}>
       {children}
     </AuthContext.Provider>
   );

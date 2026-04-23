@@ -74,5 +74,15 @@ See `/app/memory/test_credentials.md`.
 - Slab overlap validation, component-code uniqueness
 
 ## Recent Fixes
-- **Apr 22, 2026** — Salary Template dialog: fixed clipped scroll (`overflow-hidden` → scrollable body) + added compute guard for empty component list.
-- **Apr 22, 2026** — Vendor Audit: `run_full_audit` now falls back to audit-level wage_month when row lacks it (fixes FEB PT slab detection).
+- **Apr 22, 2026** — Salary Template dialog: fixed clipped scroll + compute guard.
+- **Apr 22, 2026** — Vendor Audit: `run_full_audit` falls back to audit-level wage_month when row lacks it.
+
+## Vendor Audit V3 ✅ (Apr 23, 2026)
+- **Email outbox pattern** — zero-cost. All emails (welcome, audit-open, 3-day reminder, audit-closed) write to `email_outbox` Mongo collection. Admin views in new "Email Outbox" tab. Optional Resend / SendGrid delivery via `RESEND_API_KEY` / `SENDGRID_API_KEY` + `EMAIL_FROM` env vars (plug-and-play, no code change).
+- **Auto audit window** — APScheduler daily job (06:00 IST). Admin sets per-contractor yearly schedule via bulk editor (default: open = 5th of next month, close = +10 days). On open day: auto-creates draft audit + emails contractor. 3 days before close: reminder email. On close day: auto-submits if 'uploaded/audited', marks 'missed' if 'draft' + emails closure notice.
+- **Preview + Impersonate** — Admin can open contractor portal in new tab with short-lived (30 min) JWT:
+  - Preview (`preview:true` claim) — read-only, all write endpoints return 403
+  - Impersonate — full access, logged to `impersonation_log` audit trail
+  - URL hash handoff (`#impersonate=TOKEN&mode=preview&from=NAME`) cleanly transitions session
+  - Top banner clearly indicates session type with "Exit to admin" action
+- **Tests**: 52/52 pytest (27 rules + 19 e2e + 6 v3)

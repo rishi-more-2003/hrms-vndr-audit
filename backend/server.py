@@ -3680,6 +3680,13 @@ async def startup_event():
         logger.info("Storage initialized at startup")
     except Exception as e:
         logger.warning(f"Storage init failed at startup: {e}")
+    # Start vendor audit scheduler (daily)
+    try:
+        from vendor_audit.scheduler import start_scheduler
+        from vendor_audit.routes import db as vendor_db
+        start_scheduler(vendor_db)
+    except Exception as e:
+        logger.warning(f"Vendor audit scheduler not started: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

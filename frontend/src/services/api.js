@@ -310,6 +310,19 @@ export const vendorAuditAPI = {
   templateUrl: () => `${API_URL}/vendor-audit/template/vendor-data-sheet`,
   schema: () => api.get('/vendor-audit/meta/schema'),
   dashboardStats: () => api.get('/vendor-audit/dashboard/stats'),
+  // Schedules
+  listSchedules: (contractorId) => api.get(`/vendor-audit/contractors/${contractorId}/schedules`),
+  upsertSchedules: (contractorId, schedules) => api.put(`/vendor-audit/contractors/${contractorId}/schedules`, { schedules }),
+  deleteSchedule: (scheduleId) => api.delete(`/vendor-audit/schedules/${scheduleId}`),
+  runSchedulerNow: () => api.post('/vendor-audit/scheduler/run-now'),
+  // Preview / Impersonate
+  previewSession: (contractorId) => api.post(`/vendor-audit/contractors/${contractorId}/preview-session`),
+  impersonateSession: (contractorId) => api.post(`/vendor-audit/contractors/${contractorId}/impersonate-session`),
+  impersonationLog: () => api.get('/vendor-audit/impersonation-log'),
+  // Email outbox
+  listOutbox: (params = {}) => api.get('/vendor-audit/email-outbox', { params }),
+  getOutboxEmail: (id) => api.get(`/vendor-audit/email-outbox/${id}`),
+  retryEmail: (id) => api.post(`/vendor-audit/email-outbox/${id}/retry`),
 };
 
 // ─── Contractor portal auth (separate) ───
