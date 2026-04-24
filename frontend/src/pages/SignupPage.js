@@ -54,7 +54,7 @@ export default function SignupPage() {
       toast.success('Welcome aboard! Your 14-day trial has started.');
       // Redirect to first enabled module
       const first = Array.from(selected)[0];
-      const map = { hrms: '/dashboard', vendor_audit: '/vendor-audit', register_maker: '/register-maker', internal_audit: '/internal-audit', consultancy: '/consultancy' };
+      const map = { hrms: '/dashboard', vendor_audit: '/vendor-audit/dashboard', register_maker: '/register-maker/dashboard', internal_audit: '/internal-audit/dashboard', consultancy: '/consultancy/dashboard' };
       // Force full page reload so AuthContext picks up token cleanly
       window.location.href = map[first] || '/dashboard';
     } catch (err) { toast.error(err.response?.data?.detail || 'Signup failed'); }

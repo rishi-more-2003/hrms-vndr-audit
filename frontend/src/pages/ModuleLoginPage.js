@@ -10,11 +10,11 @@ import {
 } from '@phosphor-icons/react';
 
 const MODULE_CONFIG = {
-  hrms:          { label: 'HRMS',                 tagline: 'Pay & people, simplified',        icon: Users,          destination: '/dashboard',       theme: 'warm',  portal: 'HR Portal' },
-  vendor_audit:  { label: 'Vendor Audit',         tagline: 'Virtual statutory auditor',       icon: ShieldCheck,    destination: '/vendor-audit',    theme: 'dark',  portal: 'Auditor Portal' },
-  register_maker:{ label: 'Register Maker',       tagline: 'Registers in 60 seconds',         icon: Scroll,         destination: '/register-maker',  theme: 'warm',  portal: 'Registers Portal' },
-  internal_audit:{ label: 'Internal Audit',       tagline: 'Audit-ready, always',             icon: CheckSquare,    destination: '/internal-audit',  theme: 'dark',  portal: 'Internal Audit Portal' },
-  consultancy:   { label: 'Consultancy Desk',     tagline: 'Experts on speed-dial',           icon: ChatCircleText, destination: '/consultancy',     theme: 'warm',  portal: 'Consultancy Portal' },
+  hrms:          { label: 'HRMS',                 tagline: 'Pay & people, simplified',        icon: Users,          destination: '/dashboard',                theme: 'warm',  portal: 'HR Portal' },
+  vendor_audit:  { label: 'Vendor Audit',         tagline: 'Virtual statutory auditor',       icon: ShieldCheck,    destination: '/vendor-audit/dashboard',   theme: 'dark',  portal: 'Auditor Portal' },
+  register_maker:{ label: 'Register Maker',       tagline: 'Registers in 60 seconds',         icon: Scroll,         destination: '/register-maker/dashboard', theme: 'warm',  portal: 'Registers Portal' },
+  internal_audit:{ label: 'Internal Audit',       tagline: 'Audit-ready, always',             icon: CheckSquare,    destination: '/internal-audit/dashboard', theme: 'dark',  portal: 'Internal Audit Portal' },
+  consultancy:   { label: 'Consultancy Desk',     tagline: 'Experts on speed-dial',           icon: ChatCircleText, destination: '/consultancy/dashboard',    theme: 'warm',  portal: 'Consultancy Portal' },
 };
 
 export default function ModuleLoginPage({ moduleKey }) {

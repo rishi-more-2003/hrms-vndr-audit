@@ -31,7 +31,12 @@ import SignupPage from './pages/SignupPage';
 import ModuleChooserPage from './pages/ModuleChooserPage';
 import ModuleLoginPage from './pages/ModuleLoginPage';
 import ComingSoonPage from './pages/ComingSoonPage';
+import VendorAuditDashboard from './pages/VendorAuditDashboard';
+import RegisterMakerDashboard from './pages/RegisterMakerDashboard';
+import InternalAuditDashboard from './pages/InternalAuditDashboard';
+import ConsultancyDashboard from './pages/ConsultancyDashboard';
 import PlatformAdminPage, { PlatformAdminLoginPage } from './pages/PlatformAdminPage';
+import ModuleAccessPage from './pages/ModuleAccessPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -119,10 +124,15 @@ function AppRoutes() {
       <Route path="/internal-audit/login" element={<PublicRoute><ModuleLoginPage moduleKey="internal_audit" /></PublicRoute>} />
       <Route path="/consultancy/login" element={<PublicRoute><ModuleLoginPage moduleKey="consultancy" /></PublicRoute>} />
 
-      {/* Coming-soon stubs */}
-      <Route path="/register-maker" element={<AdminRoute><ComingSoonPage moduleKey="register_maker" label="Register Maker" tagline="Auto-generate statutory registers across central + state labour laws from a single Excel upload." /></AdminRoute>} />
-      <Route path="/internal-audit" element={<AdminRoute><ComingSoonPage moduleKey="internal_audit" label="Internal Labour Audit" tagline="Continuously self-audit your own payroll & statutory compliance against evolving rules." /></AdminRoute>} />
-      <Route path="/consultancy" element={<AdminRoute><ComingSoonPage moduleKey="consultancy" label="Consultancy Desk" tagline="Raise tickets with our labour-law consultants, track resolution, and keep every document in one vault." /></AdminRoute>} />
+      {/* Coming-soon stubs — REPLACED by proper dashboards below */}
+      <Route path="/vendor-audit/dashboard" element={<AdminRoute><VendorAuditDashboard /></AdminRoute>} />
+      <Route path="/module-access" element={<AdminRoute><Layout><ModuleAccessPage /></Layout></AdminRoute>} />
+      <Route path="/register-maker" element={<AdminRoute><RegisterMakerDashboard /></AdminRoute>} />
+      <Route path="/register-maker/dashboard" element={<AdminRoute><RegisterMakerDashboard /></AdminRoute>} />
+      <Route path="/internal-audit" element={<AdminRoute><InternalAuditDashboard /></AdminRoute>} />
+      <Route path="/internal-audit/dashboard" element={<AdminRoute><InternalAuditDashboard /></AdminRoute>} />
+      <Route path="/consultancy" element={<AdminRoute><ConsultancyDashboard /></AdminRoute>} />
+      <Route path="/consultancy/dashboard" element={<AdminRoute><ConsultancyDashboard /></AdminRoute>} />
 
       {/* Platform admin */}
       <Route path="/platform-admin/login" element={<PublicRoute><PlatformAdminLoginPage /></PublicRoute>} />

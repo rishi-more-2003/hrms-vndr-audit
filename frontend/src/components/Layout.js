@@ -5,7 +5,7 @@ import {
   House, Users, ClockCounterClockwise, CalendarX,
   CurrencyDollar, Briefcase, ChartLine, SignOut,
   List, X, Buildings, Receipt, TreeStructure,
-  FileText, Rocket, GearSix, ShieldCheck, Scroll, Wallet, User, Handshake
+  FileText, Rocket, GearSix, ShieldCheck, Scroll, Wallet, User, Handshake, Shield
 } from '@phosphor-icons/react';
 import NotificationBell from './NotificationBell';
 
@@ -30,6 +30,7 @@ const Layout = ({ children }) => {
       { name: 'Departments', path: '/departments', icon: Buildings, module: 'departments' },
       { name: 'Hierarchy', path: '/hierarchy', icon: TreeStructure, module: 'hierarchy' },
       { name: 'Vendor Audit', path: '/vendor-audit', icon: Handshake, module: 'vendor_audit' },
+      { name: 'Module Access', path: '/module-access', icon: Shield, module: 'module_access' },
     ] : []),
     { name: 'Attendance', path: '/attendance', icon: ClockCounterClockwise, module: 'attendance' },
     { name: 'Leave', path: '/leave', icon: CalendarX, module: 'leave' },
