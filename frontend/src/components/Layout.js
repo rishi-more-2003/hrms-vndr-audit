@@ -8,6 +8,7 @@ import {
   FileText, Rocket, GearSix, ShieldCheck, Scroll, Wallet, User, Handshake, Shield
 } from '@phosphor-icons/react';
 import NotificationBell from './NotificationBell';
+import ModuleSwitcher from './ModuleSwitcher';
 
 const Layout = ({ children }) => {
   const { user, logout, isAdmin, hasPermission } = useAuth();
@@ -143,6 +144,7 @@ const Layout = ({ children }) => {
               {navigation.find(item => item.path === location.pathname)?.name || 'HRMS'}
             </h2>
             <div className="flex items-center space-x-2">
+              <ModuleSwitcher currentModule="hrms" />
               <NotificationBell />
               {isAdmin && (
                 <span className="badge badge-info text-xs px-3 py-1">Admin</span>

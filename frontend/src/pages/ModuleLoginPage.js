@@ -28,10 +28,12 @@ export default function ModuleLoginPage({ moduleKey }) {
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
-    const r = await login(email, password, 'admin');
+    // Per-module login pages do NOT pre-commit to a role. Any valid credential
+    // (admin or employee) may sign in; module-route gating decides access downstream.
+    const r = await login(email, password, undefined);
     setBusy(false);
     if (r.success) {
-      // Optimistically jump to the module's destination; ProtectedRoute will gate if not subscribed
+      // Optimistically jump to the module's destination; ModuleRoute will gate if not subscribed
       window.location.href = cfg.destination;
     } else {
       toast.error(r.error || 'Login failed');

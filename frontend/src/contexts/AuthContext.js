@@ -110,8 +110,22 @@ export const AuthProvider = ({ children }) => {
     return user?.permissions?.[module] === true;
   };
 
+  // Cross-module access helper. Checks /auth/me shape (module_roles) plus legacy admin fallback.
+  // Mirrors backend logic in module_roles.accessible_modules() — admins are granted access
+  // to every module their org has enabled (enforced server-side on endpoints).
+  const moduleRoles = user?.module_roles || {};
+  const hasModuleAccess = (moduleKey) => {
+    if (!user) return false;
+    if (moduleRoles[moduleKey]) return true;
+    // Legacy admin fallback — admins implicitly access all modules (server enforces org.modules)
+    if (user.role === 'admin') return true;
+    // Legacy employee has implicit hrms access
+    if (moduleKey === 'hrms' && user.role === 'employee') return true;
+    return false;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, contractor, loading, login, contractorLogin, logout, token, isAdmin, isContractor, hasPermission, impersonationMode, impersonationFrom }}>
+    <AuthContext.Provider value={{ user, contractor, loading, login, contractorLogin, logout, token, isAdmin, isContractor, hasPermission, impersonationMode, impersonationFrom, moduleRoles, hasModuleAccess }}>
       {children}
     </AuthContext.Provider>
   );

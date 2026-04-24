@@ -127,7 +127,10 @@ DEFAULT_ONBOARDING_CHECKLIST = [
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
-    login_as: UserRole = UserRole.EMPLOYEE
+    # login_as is OPTIONAL. When None, the backend skips the role-gate and lets any
+    # valid credential authenticate. Legacy HRMS /auth page still passes 'admin'/'employee'
+    # to keep its tab-switcher behaviour. New per-module login pages omit it.
+    login_as: Optional[UserRole] = None
 
 class UserRegister(BaseModel):
     email: EmailStr
@@ -142,6 +145,8 @@ class UserResponse(BaseModel):
     role: UserRole
     permissions: Optional[Dict[str, bool]] = None
     created_at: str
+    module_roles: Optional[Dict[str, str]] = None
+    organization_id: Optional[str] = None
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -502,7 +507,8 @@ async def login(credentials: UserLogin):
     user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    # Enforce login_as role check
+    # Enforce login_as role check ONLY if caller specified it (legacy /auth page).
+    # New per-module login pages omit login_as and accept any valid credential.
     if credentials.login_as == UserRole.ADMIN and user["role"] != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="You are not authorized as admin")
     if credentials.login_as == UserRole.EMPLOYEE and user["role"] == UserRole.ADMIN:
@@ -519,7 +525,9 @@ async def login(credentials: UserLogin):
         access_token=token, token_type="bearer",
         user=UserResponse(
             id=user["id"], email=user["email"], full_name=user["full_name"],
-            role=user["role"], permissions=permissions, created_at=user["created_at"]
+            role=user["role"], permissions=permissions, created_at=user["created_at"],
+            module_roles=user.get("module_roles") or {},
+            organization_id=user.get("organization_id"),
         )
     )
 
@@ -533,7 +541,9 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     return UserResponse(
         id=current_user["id"], email=current_user["email"],
         full_name=current_user["full_name"], role=current_user["role"],
-        permissions=permissions, created_at=current_user["created_at"]
+        permissions=permissions, created_at=current_user["created_at"],
+        module_roles=current_user.get("module_roles") or {},
+        organization_id=current_user.get("organization_id"),
     )
 
 

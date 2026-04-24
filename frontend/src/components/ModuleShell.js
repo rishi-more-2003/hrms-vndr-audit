@@ -1,13 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import axios from 'axios';
-import { toast } from 'sonner';
-import { Button } from './ui/button';
 import {
-  Users, ShieldCheck, Scroll, CheckSquare, ChatCircleText, Leaf, CaretDown,
-  SignOut, House, User, Gear,
+  Users, ShieldCheck, Scroll, CheckSquare, ChatCircleText, Leaf,
+  SignOut, House, User,
 } from '@phosphor-icons/react';
+import ModuleSwitcher from './ModuleSwitcher';
 
 const MODULE_META = {
   hrms: { label: 'HRMS', icon: Users, path: '/dashboard' },
@@ -21,18 +19,8 @@ export default function ModuleShell({ moduleKey, title, subtitle, children, righ
   const nav = useNavigate();
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [myAccess, setMyAccess] = useState([]);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
 
   const cur = MODULE_META[moduleKey];
-  const CurIcon = cur?.icon || Leaf;
-
-  useEffect(() => {
-    const API_URL = process.env.REACT_APP_BACKEND_URL + '/api';
-    axios.get(`${API_URL}/module-roles/me`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
-      .then(r => setMyAccess(r.data.access || []))
-      .catch(() => setMyAccess([]));
-  }, []);
 
   function doLogout() { logout(); nav(`/${moduleKey.replace('_','-')}/login`); }
 
@@ -49,36 +37,7 @@ export default function ModuleShell({ moduleKey, title, subtitle, children, righ
                 <p className="text-sm font-bold" style={{ fontFamily: 'Outfit' }}>{cur?.label}</p>
               </div>
             </a>
-            {/* Module switcher */}
-            {myAccess.length > 1 && (
-              <div className="relative">
-                <button onClick={() => setSwitcherOpen(!switcherOpen)} data-testid="module-switcher-btn"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-[#F9F6F0] transition text-sm">
-                  <CurIcon size={14} className="text-[#D96C5B]" /> <span className="font-medium">{cur?.label}</span>
-                  <CaretDown size={10} className="text-[#A28B7A]" />
-                </button>
-                {switcherOpen && (
-                  <div className="absolute top-full left-0 mt-1 bg-white border border-[#E8E2D9] rounded-xl shadow-xl min-w-[220px] overflow-hidden" data-testid="module-switcher-menu">
-                    {myAccess.map(a => {
-                      const m = MODULE_META[a.module];
-                      if (!m) return null;
-                      const MI = m.icon;
-                      return (
-                        <button key={a.module} onClick={() => { setSwitcherOpen(false); nav(m.path); }}
-                          data-testid={`switcher-${a.module}`}
-                          className={`w-full px-3 py-2.5 flex items-center gap-3 hover:bg-[#F9F6F0] text-left ${a.module === moduleKey ? 'bg-[#F9F6F0]' : ''}`}>
-                          <div className="w-7 h-7 rounded-md bg-[#D96C5B]/10 flex items-center justify-center"><MI size={14} className="text-[#D96C5B]" /></div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-[#2A2624]">{m.label}</p>
-                            <p className="text-[10px] uppercase text-[#A28B7A]">{a.role.replace(/_/g, ' ')}</p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+            <ModuleSwitcher currentModule={moduleKey} />
           </div>
           <div className="flex items-center gap-2">
             {rightActions}

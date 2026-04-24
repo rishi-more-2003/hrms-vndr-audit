@@ -82,6 +82,19 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
+// Gate for per-module Saffron dashboards. Allows access if the user has an
+// explicit module_roles[moduleKey] entry OR is a legacy admin (who implicitly
+// gets access to every module their org has enabled — backend enforces).
+const ModuleRoute = ({ moduleKey, children }) => {
+  const { user, loading, hasModuleAccess } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FDFBF9]"><p className="text-[#6A625E]">Loading...</p></div>;
+  if (!user) return <Navigate to={`/${moduleKey.replace('_', '-')}/login`} />;
+  if (user.role === 'contractor') return <Navigate to="/contractor/dashboard" />;
+  if (user.role === 'platform_admin') return <Navigate to="/platform-admin" />;
+  if (!hasModuleAccess(moduleKey)) return <Navigate to="/dashboard" />;
+  return children;
+};
+
 function AppRoutes() {
   return (
     <Routes>
@@ -124,15 +137,15 @@ function AppRoutes() {
       <Route path="/internal-audit/login" element={<PublicRoute><ModuleLoginPage moduleKey="internal_audit" /></PublicRoute>} />
       <Route path="/consultancy/login" element={<PublicRoute><ModuleLoginPage moduleKey="consultancy" /></PublicRoute>} />
 
-      {/* Coming-soon stubs — REPLACED by proper dashboards below */}
-      <Route path="/vendor-audit/dashboard" element={<AdminRoute><VendorAuditDashboard /></AdminRoute>} />
+      {/* Saffron module dashboards — gated by module_roles (not legacy admin-only) */}
+      <Route path="/vendor-audit/dashboard" element={<ModuleRoute moduleKey="vendor_audit"><VendorAuditDashboard /></ModuleRoute>} />
       <Route path="/module-access" element={<AdminRoute><Layout><ModuleAccessPage /></Layout></AdminRoute>} />
-      <Route path="/register-maker" element={<AdminRoute><RegisterMakerDashboard /></AdminRoute>} />
-      <Route path="/register-maker/dashboard" element={<AdminRoute><RegisterMakerDashboard /></AdminRoute>} />
-      <Route path="/internal-audit" element={<AdminRoute><InternalAuditDashboard /></AdminRoute>} />
-      <Route path="/internal-audit/dashboard" element={<AdminRoute><InternalAuditDashboard /></AdminRoute>} />
-      <Route path="/consultancy" element={<AdminRoute><ConsultancyDashboard /></AdminRoute>} />
-      <Route path="/consultancy/dashboard" element={<AdminRoute><ConsultancyDashboard /></AdminRoute>} />
+      <Route path="/register-maker" element={<ModuleRoute moduleKey="register_maker"><RegisterMakerDashboard /></ModuleRoute>} />
+      <Route path="/register-maker/dashboard" element={<ModuleRoute moduleKey="register_maker"><RegisterMakerDashboard /></ModuleRoute>} />
+      <Route path="/internal-audit" element={<ModuleRoute moduleKey="internal_audit"><InternalAuditDashboard /></ModuleRoute>} />
+      <Route path="/internal-audit/dashboard" element={<ModuleRoute moduleKey="internal_audit"><InternalAuditDashboard /></ModuleRoute>} />
+      <Route path="/consultancy" element={<ModuleRoute moduleKey="consultancy"><ConsultancyDashboard /></ModuleRoute>} />
+      <Route path="/consultancy/dashboard" element={<ModuleRoute moduleKey="consultancy"><ConsultancyDashboard /></ModuleRoute>} />
 
       {/* Platform admin */}
       <Route path="/platform-admin/login" element={<PublicRoute><PlatformAdminLoginPage /></PublicRoute>} />

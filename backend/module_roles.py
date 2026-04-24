@@ -130,6 +130,8 @@ async def grant_module_access(user_id: str, body: GrantModuleAccessRequest, u=De
 async def revoke_module_access(user_id: str, module: str, u=Depends(get_user)):
     if u.get("role") != "admin" and "admin" not in (u.get("module_roles") or {}).values():
         raise HTTPException(403, "Admin only")
+    if module not in MODULE_ROLES:
+        raise HTTPException(400, f"Unknown module. Must be one of: {list(MODULE_ROLES.keys())}")
     target = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not target or target.get("organization_id") != u.get("organization_id"):
         raise HTTPException(404, "User not found")

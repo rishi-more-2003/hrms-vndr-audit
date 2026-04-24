@@ -177,3 +177,63 @@ def test_login_returns_user_shape():
     assert "access_token" in data
     assert "user" in data
     assert data["user"]["email"] == "admin@hrms.com"
+
+
+# ── Iter16 additions ──
+def test_login_without_login_as_admin_works():
+    """UserLogin.login_as is now Optional — admin can authenticate with no role hint."""
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "admin@hrms.com", "password": "admin123"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["user"]["email"] == "admin@hrms.com"
+    assert data["user"]["role"] == "admin"
+
+
+def test_login_without_login_as_employee_works():
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "employee@hrms.com", "password": "emp123"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["user"]["email"] == "employee@hrms.com"
+    assert data["user"]["role"] == "employee"
+
+
+def test_login_response_includes_module_roles_and_org_id():
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "employee@hrms.com", "password": "emp123"})
+    assert r.status_code == 200
+    u = r.json()["user"]
+    assert "module_roles" in u, f"module_roles missing in user shape: {u.keys()}"
+    assert "organization_id" in u, f"organization_id missing in user shape: {u.keys()}"
+
+
+def test_auth_me_includes_module_roles_and_org_id():
+    tok = _login("employee@hrms.com", "emp123")
+    r = requests.get(f"{BASE_URL}/api/auth/me", headers=_hdr(tok))
+    assert r.status_code == 200
+    u = r.json()
+    assert "module_roles" in u
+    assert "organization_id" in u
+
+
+def test_legacy_auth_admin_tab_still_enforced():
+    """Legacy /auth tab-switcher: admin tab rejects employee creds as admin."""
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={
+        "email": "employee@hrms.com", "password": "emp123", "login_as": "admin"
+    })
+    assert r.status_code in (401, 403), f"Expected reject, got {r.status_code}"
+
+
+def test_legacy_auth_employee_tab_still_enforced():
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={
+        "email": "admin@hrms.com", "password": "admin123", "login_as": "employee"
+    })
+    assert r.status_code in (401, 403), f"Expected reject, got {r.status_code}"
+
+
+def test_revoke_rejects_unknown_module(admin_token, employee_user_id):
+    """Iter16 fix: DELETE revoke now validates module name against MODULE_ROLES."""
+    r = requests.delete(
+        f"{BASE_URL}/api/module-roles/users/{employee_user_id}/revoke/not_a_real_module",
+        headers=_hdr(admin_token),
+    )
+    assert r.status_code == 400, f"Expected 400 for unknown module, got {r.status_code}: {r.text}"
+
