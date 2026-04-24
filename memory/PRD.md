@@ -42,6 +42,16 @@ Will provide a ticket/document-vault system for labour-law queries (PF/ESIC/PT).
 - Shared user identity under the hood — single login works across all subscribed modules
 - Module icon + tagline + themed (warm or dark) background per module
 - `/login` central **Module Chooser** if user doesn't know which portal to use
+- Admin AND employee credentials both accepted (login_as is optional — backend only enforces it on the legacy `/auth` tab-switcher)
+
+### Cross-Module RBAC ✅ (Apr 24, 2026)
+- `users.module_roles: {hrms, vendor_audit, register_maker, internal_audit, consultancy}` per-module role map
+- Per-module roles: hrms [admin, employee] · vendor_audit [vendor, principal_employer, auditor] · register_maker [admin] · internal_audit [admin] · consultancy [admin, employee, consultant]
+- Admin-only `/module-access` page inside HRMS to grant/revoke module roles
+- `ModuleRoute` gate in App.js uses `AuthContext.hasModuleAccess(moduleKey)` — checks module_roles + legacy admin fallback
+- Shared `ModuleSwitcher` dropdown mounted in HRMS Layout topbar AND ModuleShell header; only shown when user has 2+ accessible modules
+- Endpoints: `GET /api/module-roles/{me,org-users,meta/roles}`, `PUT /api/module-roles/users/{id}/grant`, `DELETE /api/module-roles/users/{id}/revoke/{module}` (400 on unknown module)
+- `/auth/login` and `/auth/me` now return `module_roles` + `organization_id` in user object
 
 ### Platform Admin Portal (hidden, founder-only)
 - `/platform-admin/login` — dark branded portal
@@ -55,14 +65,20 @@ Will provide a ticket/document-vault system for labour-law queries (PF/ESIC/PT).
 - Default org (`saffron-default-org`) owns all legacy data for backward compat
 - Platform admin endpoints: `/api/platform-admin/{organizations,organizations/{id}/modules,organizations/{id}/subscription,contact-leads,stats}`
 
-## Testing (Apr 23, 2026)
-- Backend: 68/68 pytest green
-  - 5 Saffron SaaS (meta, signup, trial, platform-admin auth/gating, me/organization)
+## Testing (Apr 24, 2026)
+- Backend: 87/87 pytest green (68 prior + 19 cross-module RBAC incl. Optional login_as, response-shape, revoke 400)
+  - 5 Saffron SaaS
   - 27 Vendor Audit rules
   - 19 Vendor Audit e2e
-  - 6 Vendor Audit V3 (email outbox, schedules, preview/impersonate)
+  - 6 Vendor Audit V3
   - 11 Employee Self-Service
-- Frontend: Smoke-tested via Playwright — landing page + all 5 branded logins + module chooser + signup + platform admin login+page all render, 2 orgs visible, modules/bundles render correctly
+  - 19 Module Roles + Auth (cross-module RBAC)
+- Frontend: E2E verified via testing_agent_v3_fork (iteration_16) — admin + employee logins on /hrms/login, Module Switcher shown for multi-module employees + hidden for single-module, ModuleRoute gates module dashboards correctly
+
+## Recent Fixes
+- **Apr 24, 2026** — Cross-module RBAC frontend wiring (ModuleRoute replacing AdminRoute, ModuleSwitcher in Layout topbar, ModuleLoginPage no longer hardcodes login_as='admin').
+- **Apr 22, 2026** — Salary Template dialog scroll fix + compute guard.
+- **Apr 22, 2026** — Vendor Audit: `run_full_audit` falls back to audit-level wage_month.
 
 ## Next Priorities
 
@@ -88,7 +104,3 @@ Will provide a ticket/document-vault system for labour-law queries (PF/ESIC/PT).
 - Dashboard analytics (submission-lag trend, most common findings, contractor leaderboard)
 - Recruitment / ATS, Performance / OKRs, Mobile PWA
 - Bulk contractor CSV onboarding
-
-## Recent Fixes
-- **Apr 22, 2026** — Salary Template dialog scroll fix + compute guard.
-- **Apr 22, 2026** — Vendor Audit: `run_full_audit` falls back to audit-level wage_month.
