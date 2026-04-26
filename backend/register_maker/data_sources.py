@@ -52,23 +52,26 @@ Guidelines:
 - Output ONLY JSON, no prose, no markdown fences."""
 
 
-async def _call(model: str, system: str, user_prompt: str,
-                file_attach: Optional[str] = None, session: str = "rm-data") -> Tuple[Optional[str], int, int]:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY not configured")
-    provider = "gemini" if model.startswith("gemini") else "anthropic"
-    chat = LlmChat(api_key=api_key, session_id=session, system_message=system).with_model(provider, model)
-    file_contents = None
-    if file_attach and provider == "gemini":
+async def _call(model_hint: str, system: str, user_prompt: str,
+                file_attach: Optional[str] = None, session: str = "rm-data",
+                task: str = "data_normalize",
+                escalate: bool = False) -> Tuple[Optional[str], int, int, float, str]:
+    """Run via the unified ai_providers router.
+    Returns (text, tokens_in, tokens_out, cost_inr, model_used).
+    """
+    from ai_providers import run_task as _router_run, FileAttachment
+    files = None
+    if file_attach:
         mime = "application/pdf" if file_attach.endswith(".pdf") else "text/plain"
-        file_contents = [FileContentWithMimeType(file_path=file_attach, mime_type=mime)]
-    msg = UserMessage(text=user_prompt, file_contents=file_contents) if file_contents else UserMessage(text=user_prompt)
-    text = await chat.send_message(msg)
-    if not isinstance(text, str):
-        text = str(text)
-    tin = _approx_tokens(system) + _approx_tokens(user_prompt) + (1500 if file_contents else 0)
-    return text, tin, _approx_tokens(text)
+        files = [FileAttachment(path=file_attach, mime_type=mime)]
+    result = await _router_run(
+        task=task,
+        system=system, user=user_prompt, files=files,
+        session_id=session, json_mode=True,
+        escalate=escalate,
+        meta={"hint_model": model_hint},
+    )
+    return result.text, result.tokens_in, result.tokens_out, result.cost_inr, result.model_used
 
 
 def _build_data_prompt(extracted: Dict[str, Any]) -> str:
@@ -121,30 +124,36 @@ async def normalize_data_file(file_bytes: bytes, file_name: str) -> Dict[str, An
 
     try:
         try:
-            text, tin, tout = await _call(GEMINI_FLASH, NORMALIZE_SYSTEM, user_prompt, file_attach=pdf_path)
+            text, tin, tout, cinr, used_model = await _call(
+                GEMINI_FLASH, NORMALIZE_SYSTEM, user_prompt, file_attach=pdf_path,
+            )
             total_in += tin
             total_out += tout
-            cost += estimate_inr(GEMINI_FLASH, tin, tout)
+            cost += cinr
+            model_used = used_model
             normalized = _parse_json_loose(text or "")
         except Exception as e:
-            warnings.append(f"flash_error: {str(e)[:120]}")
+            warnings.append(f"primary_error: {str(e)[:120]}")
 
         confidence = float((normalized or {}).get("confidence") or 0)
         records = (normalized or {}).get("records") or []
         if normalized is None or confidence < 0.6 or (not records and not (normalized or {}).get("establishment")):
             escalated = True
             try:
-                text2, tin2, tout2 = await _call(CLAUDE_SONNET, NORMALIZE_SYSTEM, user_prompt, session="rm-data-sonnet")
+                text2, tin2, tout2, cinr2, used_model2 = await _call(
+                    CLAUDE_SONNET, NORMALIZE_SYSTEM, user_prompt,
+                    session="rm-data-fb", escalate=True,
+                )
                 total_in += tin2
                 total_out += tout2
-                cost += estimate_inr(CLAUDE_SONNET, tin2, tout2)
+                cost += cinr2
                 norm2 = _parse_json_loose(text2 or "")
                 if norm2 and (norm2.get("records") or norm2.get("establishment")):
                     if not normalized or float(norm2.get("confidence") or 0) >= confidence:
                         normalized = norm2
-                        model_used = CLAUDE_SONNET
+                        model_used = used_model2
             except Exception as e:
-                warnings.append(f"sonnet_error: {str(e)[:120]}")
+                warnings.append(f"escalation_error: {str(e)[:120]}")
 
         if normalized is None:
             normalized = {"records": [], "available_fields": [], "establishment": {},
@@ -221,27 +230,33 @@ async def map_template_to_data(template_schema: Dict[str, Any],
     model_used = GEMINI_FLASH
     mapping = None
     try:
-        text, tin, tout = await _call(GEMINI_FLASH, MAPPING_SYSTEM, user_prompt, session="rm-map")
+        text, tin, tout, cinr, used_model = await _call(
+            GEMINI_FLASH, MAPPING_SYSTEM, user_prompt, session="rm-map", task="field_mapping",
+        )
         total_in += tin
         total_out += tout
-        cost += estimate_inr(GEMINI_FLASH, tin, tout)
+        cost += cinr
+        model_used = used_model
         mapping = _parse_json_loose(text or "")
     except Exception as e:
-        logger.warning(f"map flash failed: {e}")
+        logger.warning(f"map primary failed: {e}")
 
     if mapping is None or float(mapping.get("confidence") or 0) < 0.6:
         escalated = True
         try:
-            text2, tin2, tout2 = await _call(CLAUDE_SONNET, MAPPING_SYSTEM, user_prompt, session="rm-map-sonnet")
+            text2, tin2, tout2, cinr2, used_model2 = await _call(
+                CLAUDE_SONNET, MAPPING_SYSTEM, user_prompt,
+                session="rm-map-fb", task="field_mapping", escalate=True,
+            )
             total_in += tin2
             total_out += tout2
-            cost += estimate_inr(CLAUDE_SONNET, tin2, tout2)
+            cost += cinr2
             m2 = _parse_json_loose(text2 or "")
             if m2 and m2.get("column_mapping"):
                 mapping = m2
-                model_used = CLAUDE_SONNET
+                model_used = used_model2
         except Exception as e:
-            logger.warning(f"map sonnet failed: {e}")
+            logger.warning(f"map fallback failed: {e}")
 
     if mapping is None:
         mapping = {"column_mapping": {}, "static_mapping": {}, "missing_required": [],

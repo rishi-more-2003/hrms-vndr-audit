@@ -155,28 +155,26 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-async def _call_llm(model: str, system: str, user_prompt: str,
-                    pdf_path: Optional[str] = None, session_id: str = "register-schema") -> Tuple[Optional[str], int, int]:
-    """Run a single LLM call. Returns (text, tokens_in_estimate, tokens_out_estimate)."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY not configured")
+async def _call_llm(model_hint: str, system: str, user_prompt: str,
+                    pdf_path: Optional[str] = None, session_id: str = "register-schema",
+                    task: str = "template_schema",
+                    escalate: bool = False) -> Tuple[Optional[str], int, int, float, str]:
+    """Run via the unified ai_providers router.
+    Returns (text, tokens_in, tokens_out, cost_inr, model_used).
 
-    provider = "gemini" if model.startswith("gemini") else "anthropic"
-    chat = LlmChat(api_key=api_key, session_id=session_id, system_message=system).with_model(provider, model)
-
-    file_contents = None
-    # File attachments only supported for Gemini per playbook
-    if pdf_path and provider == "gemini":
-        file_contents = [FileContentWithMimeType(file_path=pdf_path, mime_type="application/pdf")]
-
-    msg = UserMessage(text=user_prompt, file_contents=file_contents) if file_contents else UserMessage(text=user_prompt)
-    text = await chat.send_message(msg)
-    if not isinstance(text, str):
-        text = str(text)
-    tokens_in = _approx_tokens(system) + _approx_tokens(user_prompt) + (1500 if file_contents else 0)
-    tokens_out = _approx_tokens(text)
-    return text, tokens_in, tokens_out
+    `model_hint` is metadata only — actual model is chosen from AI_P*_MODEL env.
+    `task` defaults to template_schema (P1). Pass task='legal_qa' for P2 / 'audit_report' for P3.
+    """
+    from ai_providers import run_task as _router_run, FileAttachment
+    files = [FileAttachment(path=pdf_path, mime_type="application/pdf")] if pdf_path else None
+    result = await _router_run(
+        task=task,
+        system=system, user=user_prompt, files=files,
+        session_id=session_id, json_mode=True,
+        escalate=escalate,
+        meta={"hint_model": model_hint},
+    )
+    return result.text, result.tokens_in, result.tokens_out, result.cost_inr, result.model_used
 
 
 async def study_template(extracted: Dict[str, Any], file_bytes: Optional[bytes] = None,
@@ -204,19 +202,20 @@ async def study_template(extracted: Dict[str, Any], file_bytes: Optional[bytes] 
     warnings: list = []
 
     try:
-        # Pass 1: Gemini Flash (with PDF attached if applicable)
+        # Pass 1: configured P1 primary
         try:
-            text, t_in, t_out = await _call_llm(
+            text, t_in, t_out, c_inr, used_model = await _call_llm(
                 GEMINI_FLASH, SYSTEM_PROMPT, user_prompt,
                 pdf_path=pdf_tmp_path, session_id="rm-flash",
             )
             total_in += t_in
             total_out += t_out
-            total_cost += estimate_inr(GEMINI_FLASH, t_in, t_out)
+            total_cost += c_inr
+            model_used = used_model
             schema = _parse_json_loose(text or "")
         except Exception as e:
-            logger.warning(f"Flash call failed: {e}")
-            warnings.append(f"flash_error: {str(e)[:120]}")
+            logger.warning(f"Primary template-extract call failed: {e}")
+            warnings.append(f"primary_error: {str(e)[:120]}")
             schema = None
             text = None
 
@@ -231,23 +230,21 @@ async def study_template(extracted: Dict[str, Any], file_bytes: Optional[bytes] 
         if needs_escalation:
             escalated = True
             try:
-                # For Sonnet, file attachment NOT supported via emergentintegrations — text-only
-                text2, t_in2, t_out2 = await _call_llm(
+                text2, t_in2, t_out2, c_inr2, used_model2 = await _call_llm(
                     CLAUDE_SONNET, SYSTEM_PROMPT, user_prompt,
-                    pdf_path=None, session_id="rm-sonnet",
+                    pdf_path=None, session_id="rm-sonnet", escalate=True,
                 )
                 total_in += t_in2
                 total_out += t_out2
-                total_cost += estimate_inr(CLAUDE_SONNET, t_in2, t_out2)
+                total_cost += c_inr2
                 schema2 = _parse_json_loose(text2 or "")
-                # Pick whichever has higher confidence + non-empty columns
                 if schema2 and schema2.get("columns"):
                     if not schema or float(schema2.get("confidence") or 0) >= confidence:
                         schema = schema2
-                        model_used = CLAUDE_SONNET
+                        model_used = used_model2
             except Exception as e:
-                logger.warning(f"Sonnet escalation failed: {e}")
-                warnings.append(f"sonnet_error: {str(e)[:120]}")
+                logger.warning(f"Escalation call failed: {e}")
+                warnings.append(f"escalation_error: {str(e)[:120]}")
 
         if schema is None:
             schema = {

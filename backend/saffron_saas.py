@@ -314,3 +314,21 @@ async def platform_stats(u=Depends(get_user)):
         "trial": trial_orgs, "active": active_orgs,
         "new_leads": leads,
     }
+
+
+
+@platform_router.get("/ai-config")
+async def platform_ai_config(u=Depends(get_user)):
+    """View active LLM routing configuration (per-phase provider + model)."""
+    require_platform_admin(u)
+    from ai_providers import get_active_config
+    return get_active_config()
+
+
+@platform_router.get("/ai-usage")
+async def platform_ai_usage(u=Depends(get_user), days: int = 30):
+    """Aggregate AI usage cost across all calls in the last `days`."""
+    require_platform_admin(u)
+    from ai_providers.usage_logger import aggregate_usage
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return await aggregate_usage({"created_at": {"$gte": cutoff}})

@@ -80,12 +80,12 @@ Will provide a ticket/document-vault system for labour-law queries (PF/ESIC/PT).
 - Frontend: E2E verified via testing_agent_v3_fork (iteration_16) — admin + employee logins on /hrms/login, Module Switcher shown for multi-module employees + hidden for single-module, ModuleRoute gates module dashboards correctly
 
 ## Recent Fixes
-- **Apr 26, 2026** — Vendor Audit Phase 1 PIVOT: Drop fixed Excel template. Contractor uploads any PDF/Excel/Word; hybrid Gemini Flash + Sonnet 4.5 AI extracts payroll/employee data; SHA-256 cross-tenant cache; regex-based document validation rules catch MISMATCH errors; combiner merges multi-doc data into rule-engine-compatible rows. 62/62 backend pytest + 100% frontend E2E green (iter19). Legacy upload flow preserved as collapsible fallback.
-- **Apr 26, 2026** — Register Maker Phase B: Data sheet upload + AI normalization + generation wizard + .xlsx download. 17/17 pytest + iter18 E2E green.
-- **Apr 26, 2026** — Register Maker Phase A: Hybrid Flash+Sonnet schema extraction. 11/11 + iter17 E2E green.
-- **Apr 24, 2026** — Cross-module RBAC frontend wiring (ModuleRoute, ModuleSwitcher in Layout, ModuleLoginPage no longer hardcodes login_as).
-- **Apr 22, 2026** — Salary Template dialog scroll fix + compute guard.
-- **Apr 22, 2026** — Vendor Audit: `run_full_audit` falls back to audit-level wage_month.
+- **Apr 26, 2026** — AI Provider Abstraction (Phase A of fine-tuning roadmap): All LLM calls now route through `/app/backend/ai_providers/` (router.py + base.py + emergent/google_native/openai_native providers + usage_logger). Per-task → per-phase → per-env-var routing (AI_P1/P2/P3 _PROVIDER + _MODEL + _FALLBACK_*). Bring-your-own GOOGLE_API_KEY / OPENAI_API_KEY = single env change to deploy fine-tuned models. New endpoints `/api/platform-admin/ai-config` + `/ai-usage` for per-call cost ledger. 73 existing pytest + 9 new abstraction tests all green; current LLM behavior unchanged via Emergent default.
+- **Apr 26, 2026** — Vendor Audit Phase 1 PIVOT: Drop fixed Excel template; AI extracts from any PDF/Excel/Word; SHA-256 cross-tenant cache; regex doc validation; combiner unifies multi-doc data. 62/62 backend pytest + iter19 E2E green.
+- **Apr 26, 2026** — Register Maker Phase B: Data sheet upload + AI normalization + generation wizard + .xlsx download. 17/17 + iter18 green.
+- **Apr 26, 2026** — Register Maker Phase A: Hybrid Flash+Sonnet schema extraction. 11/11 + iter17 green.
+- **Apr 24, 2026** — Cross-module RBAC frontend wiring (ModuleRoute, ModuleSwitcher, ModuleLoginPage).
+- **Apr 22, 2026** — Salary Template dialog scroll fix; Vendor Audit wage_month fallback.
 
 ## Next Priorities
 

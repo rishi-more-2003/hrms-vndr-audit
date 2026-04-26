@@ -238,22 +238,25 @@ def _parse_loose_json(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-async def _call(model: str, system: str, user_prompt: str,
-                pdf_path: Optional[str] = None, session: str = "vendor-extract") -> Tuple[Optional[str], int, int]:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise RuntimeError("EMERGENT_LLM_KEY not configured")
-    provider = "gemini" if model.startswith("gemini") else "anthropic"
-    chat = LlmChat(api_key=api_key, session_id=session, system_message=system).with_model(provider, model)
-    file_contents = None
-    if pdf_path and provider == "gemini":
-        file_contents = [FileContentWithMimeType(file_path=pdf_path, mime_type="application/pdf")]
-    msg = UserMessage(text=user_prompt, file_contents=file_contents) if file_contents else UserMessage(text=user_prompt)
-    text = await chat.send_message(msg)
-    if not isinstance(text, str):
-        text = str(text)
-    t_in = _approx_tokens(system) + _approx_tokens(user_prompt) + (1500 if file_contents else 0)
-    return text, t_in, _approx_tokens(text)
+async def _call(model_hint: str, system: str, user_prompt: str,
+                pdf_path: Optional[str] = None, session: str = "vendor-extract",
+                escalate: bool = False) -> Tuple[Optional[str], int, int, float, str]:
+    """Run via the unified ai_providers router. Returns (text, tokens_in, tokens_out, cost_inr, model_used).
+
+    `model_hint` is informational metadata logged with the call — the actual model
+    is chosen by the router from env config (AI_P1_MODEL / AI_P1_FALLBACK_MODEL).
+    `escalate=True` runs the fallback chain first (used after Pass-1 confidence is low).
+    """
+    from ai_providers import run_task, FileAttachment
+    files = [FileAttachment(path=pdf_path, mime_type="application/pdf")] if pdf_path else None
+    result = await run_task(
+        task="document_extract",
+        system=system, user=user_prompt, files=files,
+        session_id=session, json_mode=True,
+        escalate=escalate,
+        meta={"hint_model": model_hint},
+    )
+    return result.text, result.tokens_in, result.tokens_out, result.cost_inr, result.model_used
 
 
 async def extract_document(content: bytes, file_name: str, claimed_doc_type: Optional[str] = None,
@@ -310,34 +313,39 @@ async def extract_document(content: bytes, file_name: str, claimed_doc_type: Opt
     warnings: list = []
 
     try:
-        # Pass 1: Flash
+        # Pass 1: configured P1 primary (default Gemini Flash)
         try:
-            text, tin, tout = await _call(GEMINI_FLASH, SYSTEM_PROMPT, user_prompt, pdf_path=pdf_tmp_path)
+            text, tin, tout, cost_inr, used_model = await _call(
+                GEMINI_FLASH, SYSTEM_PROMPT, user_prompt, pdf_path=pdf_tmp_path,
+            )
             total_in += tin
             total_out += tout
-            cost += estimate_inr(GEMINI_FLASH, tin, tout)
+            cost += cost_inr
+            model_used = used_model
             extracted = _parse_loose_json(text or "")
         except Exception as e:
-            warnings.append(f"flash_error: {str(e)[:120]}")
+            warnings.append(f"primary_error: {str(e)[:120]}")
 
         confidence = float((extracted or {}).get("confidence") or 0)
-        # Escalate if low confidence OR no employees (when one was expected)
         needs = (extracted is None) or (confidence < 0.6)
         if needs:
             escalated = True
             try:
-                text2, tin2, tout2 = await _call(CLAUDE_SONNET, SYSTEM_PROMPT, user_prompt,
-                                                  pdf_path=None, session="vendor-extract-sonnet")
+                # Escalate to P1 fallback (or PDF-strong if env points there)
+                text2, tin2, tout2, cost_inr2, used_model2 = await _call(
+                    CLAUDE_SONNET, SYSTEM_PROMPT, user_prompt,
+                    pdf_path=None, session="vendor-extract-fb", escalate=True,
+                )
                 total_in += tin2
                 total_out += tout2
-                cost += estimate_inr(CLAUDE_SONNET, tin2, tout2)
+                cost += cost_inr2
                 ext2 = _parse_loose_json(text2 or "")
                 if ext2 and (ext2.get("summary") or ext2.get("employees") or ext2.get("doc_type_detected")):
                     if not extracted or float(ext2.get("confidence") or 0) >= confidence:
                         extracted = ext2
-                        model_used = CLAUDE_SONNET
+                        model_used = used_model2
             except Exception as e:
-                warnings.append(f"sonnet_error: {str(e)[:120]}")
+                warnings.append(f"escalation_error: {str(e)[:120]}")
 
         if extracted is None:
             extracted = {"doc_type_detected": "unknown", "summary": {}, "employees": [],
