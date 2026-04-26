@@ -75,6 +75,36 @@ export default function AuditRunPage({ isContractor = false }) {
     setBusy(false); e.target.value = '';
   }
 
+  async function onAIDocument(file, claimedDocType) {
+    setBusy(true);
+    try {
+      const r = await vendorAuditAPI.uploadDocumentAI(id, file, claimedDocType);
+      const v = r.data.validation || {};
+      if (v.status === 'mismatch') toast.warning(`Validation: ${v.message}`);
+      else if (v.status === 'unknown') toast.info('Document not recognized as statutory format — AI extracted what it could');
+      else toast.success(`Extracted from ${r.data.file_name}${r.data.from_cache ? ' (cached)' : ` · ₹${(r.data.cost_inr || 0).toFixed(2)}`}`);
+      refresh();
+    } catch (err) { toast.error(err.response?.data?.detail || 'AI extraction failed'); }
+    setBusy(false);
+  }
+  async function onDeleteAIDoc(docId) {
+    if (!window.confirm('Remove this document from the audit?')) return;
+    try {
+      await vendorAuditAPI.deleteAIDocument(id, docId);
+      toast.success('Removed'); refresh();
+    } catch (err) { toast.error('Failed'); }
+  }
+  async function runAuditAI() {
+    setBusy(true);
+    try {
+      await vendorAuditAPI.runAuditAI(id);
+      toast.success('AI audit completed');
+      setTab('findings');
+      refresh();
+    } catch (err) { toast.error(err.response?.data?.detail || 'AI audit failed'); }
+    setBusy(false);
+  }
+
   async function runAudit() {
     setBusy(true);
     try {
@@ -131,13 +161,15 @@ export default function AuditRunPage({ isContractor = false }) {
       <div className="bg-white border border-[#E8E2D9] rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <p className="text-xs font-bold uppercase text-[#2A2624]">Audit Progress</p>
-          <p className="text-xs text-[#6A625E]">{audit.rows?.length || 0} employees · {pdfsUploaded}/{DOC_TYPES.length} PDFs · {result ? 'Audited' : 'Pending'}</p>
+          <p className="text-xs text-[#6A625E]">
+            {(audit.ai_documents ? Object.keys(audit.ai_documents).length : 0)} smart docs ·
+            {' '}{audit.rows?.length || 0} employees · {result ? 'Audited' : 'Pending'}
+          </p>
         </div>
         <div className="flex gap-1">
-          <StepBadge done={(audit.rows || []).length > 0} label="1. Payroll Excel" />
-          <StepBadge done={pdfsUploaded > 0} warn={pdfsUploaded > 0 && pdfsUploaded < DOC_TYPES.length} label={`2. Statutory PDFs (${pdfsUploaded}/${DOC_TYPES.length})`} />
-          <StepBadge done={!!result} label="3. Run Audit" />
-          <StepBadge done={['submitted','approved','rejected'].includes(audit.status)} label="4. Submit" />
+          <StepBadge done={(audit.ai_documents && Object.keys(audit.ai_documents).length > 0) || (audit.rows || []).length > 0} label="1. Upload Documents" />
+          <StepBadge done={!!result} label="2. Run AI Audit" />
+          <StepBadge done={['submitted','approved','rejected'].includes(audit.status)} label="3. Submit" />
         </div>
       </div>
 
@@ -149,57 +181,18 @@ export default function AuditRunPage({ isContractor = false }) {
         ))}
       </div>
 
-      {/* UPLOAD */}
+      {/* UPLOAD — AI Smart Upload (any documents, AI extracts) */}
       {tab === 'upload' && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-white border-2 border-dashed border-[#E8E2D9] rounded-xl p-5 space-y-3">
-            <div className="flex items-center gap-2"><Table size={18} className="text-[#D96C5B]" /><p className="font-semibold text-[#2A2624]">Payroll Excel (single file)</p></div>
-            {audit.rows?.length > 0 ? (
-              <div className="bg-[#7D9D85]/10 rounded-lg p-3 text-sm">
-                <div className="flex items-center gap-2 text-[#4A6C52]"><CheckCircle size={16} /> {audit.rows.length} employees parsed</div>
-                <p className="text-xs text-[#6A625E] mt-1">File: {audit.excel_file_name}</p>
-              </div>
-            ) : <p className="text-xs text-[#A28B7A]">Upload the filled vendor data collection sheet for this wage month.</p>}
-            <div className="flex gap-2">
-              <Button asChild size="sm" variant="outline"><a href={vendorAuditAPI.templateUrl() + '?t=' + (localStorage.getItem('token') || '')}
-                onClick={async (e) => {
-                  e.preventDefault();
-                  const r = await fetch(vendorAuditAPI.templateUrl(), { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
-                  const blob = await r.blob();
-                  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vendor_data_collection_template.xlsx'; a.click();
-                }} data-testid="download-template-btn"><Download size={14} className="mr-1" /> Template</a></Button>
-              <label className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer ${locked ? 'bg-[#A28B7A]/30 text-[#6A625E]' : 'bg-[#D96C5B] text-white hover:bg-[#C25949]'}`} data-testid="upload-excel-btn">
-                <Upload size={14} /> {audit.rows?.length > 0 ? 'Re-upload' : 'Upload Excel'}
-                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={onExcel} disabled={locked || busy} />
-              </label>
-            </div>
-          </div>
-
-          <div className="bg-white border border-[#E8E2D9] rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-3"><FileText size={18} className="text-[#D96C5B]" /><p className="font-semibold text-[#2A2624]">Statutory PDFs</p></div>
-            <p className="text-xs text-[#A28B7A] mb-3">Upload original PDFs downloaded from govt portals. Scanned/printed PDFs are rejected.</p>
-            <div className="space-y-2">
-              {DOC_TYPES.map(d => {
-                const uploaded = !!docs[d.key];
-                return (
-                  <div key={d.key} className="flex items-center justify-between gap-2 p-2 rounded-lg hover:bg-[#F9F6F0]">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {uploaded ? <CheckCircle size={16} className="text-[#4A6C52] flex-shrink-0" /> : <div className="w-4 h-4 rounded-full border-2 border-[#E8E2D9] flex-shrink-0" />}
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-[#2A2624]">{d.label}</p>
-                        {uploaded && <p className="text-[10px] text-[#A28B7A] truncate">{docs[d.key].file_name}</p>}
-                      </div>
-                    </div>
-                    <label className={`text-xs cursor-pointer px-3 py-1 rounded-md ${locked ? 'bg-[#A28B7A]/20 text-[#6A625E]' : uploaded ? 'text-[#D96C5B] hover:bg-[#D96C5B]/10' : 'bg-[#D96C5B] text-white hover:bg-[#C25949]'}`} data-testid={`upload-${d.key}-btn`}>
-                      <Upload size={12} className="inline mr-1" />{uploaded ? 'Replace' : 'Upload'}
-                      <input type="file" accept=".pdf" className="hidden" onChange={(e) => onPdf(d.key, e)} disabled={locked || busy} />
-                    </label>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <SmartUploadPanel
+          audit={audit}
+          locked={locked}
+          busy={busy}
+          onUpload={onAIDocument}
+          onDelete={onDeleteAIDoc}
+          onRunAudit={runAuditAI}
+          onLegacyExcel={onExcel}
+          onLegacyPdf={onPdf}
+        />
       )}
 
       {/* REVIEW */}
@@ -237,8 +230,18 @@ export default function AuditRunPage({ isContractor = false }) {
           {!result ? (
             <div className="bg-white border border-[#E8E2D9] rounded-xl p-6 text-center space-y-3">
               <ShieldCheck size={36} className="text-[#D96C5B] mx-auto" />
-              <p className="text-sm text-[#6A625E]">Run the automated audit to cross-verify the Excel against the PDFs at employee-level.</p>
-              <Button onClick={runAudit} disabled={busy || !(audit.rows?.length > 0)} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="run-audit-btn"><Play size={16} className="mr-1" /> Run Audit</Button>
+              <p className="text-sm text-[#6A625E]">Run the audit to cross-verify uploaded documents at employee-level.</p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <Button onClick={runAuditAI}
+                  disabled={busy || !(audit.ai_documents && Object.keys(audit.ai_documents).length > 0)}
+                  className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="run-ai-audit-btn">
+                  <Play size={16} className="mr-1" /> Run AI Audit
+                </Button>
+                <Button onClick={runAudit} variant="outline"
+                  disabled={busy || !(audit.rows?.length > 0)} data-testid="run-audit-btn">
+                  Legacy (Excel-based)
+                </Button>
+              </div>
             </div>
           ) : (
             <>
@@ -402,3 +405,147 @@ function FindingCard({ f }) {
 function EmptyState({ label }) {
   return <div className="text-center py-12 text-sm text-[#A28B7A] bg-[#F9F6F0] rounded-xl">{label}</div>;
 }
+
+
+const VAL_STYLES = {
+  valid:    { color: '#7D9D85', label: 'Valid', icon: CheckCircle },
+  mismatch: { color: '#D96C5B', label: 'Mismatch', icon: Warning },
+  unknown:  { color: '#A28B7A', label: 'Unknown', icon: Info },
+  invalid:  { color: '#C65549', label: 'Invalid', icon: XCircle },
+};
+
+function SmartUploadPanel({ audit, locked, busy, onUpload, onDelete, onRunAudit, onLegacyExcel, onLegacyPdf }) {
+  const [claimed, setClaimed] = React.useState('');
+  const [showLegacy, setShowLegacy] = React.useState(false);
+  const aiDocs = audit.ai_documents ? Object.values(audit.ai_documents) : [];
+  const sortedDocs = aiDocs.slice().sort((a, b) => (b.uploaded_at || '').localeCompare(a.uploaded_at || ''));
+
+  function handleFiles(e) {
+    const files = Array.from(e.target.files || []);
+    files.forEach(f => onUpload(f, claimed || undefined));
+    e.target.value = '';
+  }
+
+  return (
+    <div className="space-y-4" data-testid="smart-upload-panel">
+      {/* Hero */}
+      <div className="bg-gradient-to-br from-[#E8B25C] to-[#D96C5B] text-white rounded-2xl p-6">
+        <p className="text-[10px] uppercase tracking-widest font-semibold opacity-90">AI Smart Upload</p>
+        <h2 className="text-2xl font-semibold mt-1" style={{ fontFamily: 'Outfit' }}>Just upload your documents.</h2>
+        <p className="text-white/90 mt-1 text-sm max-w-2xl">Drop PF challans, ESIC contributions, payroll Excels, wage registers — anything. Saffron's AI reads them, classifies them, extracts every field, and runs the full audit.</p>
+        <p className="text-[11px] text-white/70 mt-2">Supports .pdf, .xlsx, .docx · 25 MB max per file · Same file uploaded twice = ₹0 (cached extraction)</p>
+      </div>
+
+      {/* Drop zone */}
+      <div className="bg-white border-2 border-dashed border-[#E8E2D9] rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+            <Label className="text-xs whitespace-nowrap">Document type (optional hint):</Label>
+            <select
+              value={claimed} onChange={e => setClaimed(e.target.value)}
+              className="text-xs px-2 py-1.5 border border-[#E8E2D9] rounded bg-white"
+              data-testid="ai-claimed-doc-type"
+            >
+              <option value="">Auto-detect</option>
+              {DOC_TYPES.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+            </select>
+          </div>
+          <label
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition ${locked || busy ? 'bg-[#A28B7A]/30 text-[#6A625E]' : 'bg-[#D96C5B] text-white hover:bg-[#C25949]'}`}
+            data-testid="ai-upload-btn"
+          >
+            <Upload size={14} /> {busy ? 'Extracting…' : 'Upload document(s)'}
+            <input type="file" multiple accept=".pdf,.xlsx,.xls,.docx" className="hidden" onChange={handleFiles} disabled={locked || busy} />
+          </label>
+        </div>
+
+        {sortedDocs.length === 0 ? (
+          <p className="text-xs text-[#A28B7A] py-4 text-center">No documents uploaded yet — drop your first one above.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {sortedDocs.map(d => {
+              const meta = VAL_STYLES[d.validation?.status] || VAL_STYLES.unknown;
+              const StatusIcon = meta.icon;
+              const detected = d.detected_doc_type || d.extracted?.doc_type_detected;
+              const detectedLabel = DOC_TYPES.find(t => t.key === detected)?.label || detected || 'unknown';
+              const empCount = (d.extracted?.employees || []).length;
+              return (
+                <div key={d.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-[#F9F6F0] border border-[#E8E2D9]" data-testid={`ai-doc-${d.id}`}>
+                  <FileText size={14} className="text-[#A28B7A] flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-[#2A2624] truncate">{d.file_name}</p>
+                    <p className="text-[10px] text-[#A28B7A] truncate">
+                      {(d.file_size / 1024).toFixed(0)} KB · detected: <b>{detectedLabel}</b>
+                      {empCount > 0 && ` · ${empCount} employees`}
+                      {d.from_cache ? ' · cached (₹0)' : d.cost_inr > 0 ? ` · ₹${d.cost_inr.toFixed(2)}` : ''}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded" style={{ backgroundColor: `${meta.color}20`, color: meta.color }}>
+                    <StatusIcon size={10} weight="fill" /> {meta.label}
+                  </span>
+                  <button onClick={() => onDelete(d.id)} disabled={locked} className="text-[#A28B7A] hover:text-[#D96C5B] p-1 disabled:opacity-40" data-testid={`ai-doc-del-${d.id}`}>
+                    <XCircle size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Validation warnings */}
+        {sortedDocs.some(d => d.validation?.status === 'mismatch') && (
+          <div className="bg-[#D96C5B]/10 border border-[#D96C5B]/30 rounded-lg p-2 text-xs text-[#A0532E]">
+            <Warning size={12} className="inline mr-1" />
+            Some documents look like a different statutory format than what was claimed. Click a row's status badge for details, or just leave the type as Auto-detect.
+          </div>
+        )}
+      </div>
+
+      {/* Run Audit CTA */}
+      {sortedDocs.length > 0 && (
+        <div className="bg-white border border-[#E8E2D9] rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-[#2A2624]">Ready when you are.</p>
+            <p className="text-[11px] text-[#A28B7A]">{sortedDocs.length} document(s) uploaded · {sortedDocs.reduce((a, d) => a + (d.extracted?.employees?.length || 0), 0)} employee rows extracted across files</p>
+          </div>
+          <Button onClick={onRunAudit} disabled={locked || busy} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="run-ai-audit-cta">
+            <Play size={14} className="mr-1" /> Run AI Audit
+          </Button>
+        </div>
+      )}
+
+      {/* Legacy fallback (collapsible) */}
+      <div className="bg-[#F9F6F0]/50 rounded-xl p-3">
+        <button
+          onClick={() => setShowLegacy(s => !s)}
+          className="w-full flex items-center justify-between text-xs text-[#6A625E] hover:text-[#2A2624]"
+          data-testid="toggle-legacy-upload"
+        >
+          <span>Prefer the old fixed-template + slot-based upload? {showLegacy ? '▼' : '▶'}</span>
+          <span className="text-[10px] text-[#A28B7A]">Optional</span>
+        </button>
+        {showLegacy && (
+          <div className="grid md:grid-cols-2 gap-3 mt-3">
+            <div className="bg-white border border-[#E8E2D9] rounded-lg p-3 text-xs">
+              <p className="font-semibold mb-2">Filled vendor data Excel</p>
+              <label className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md cursor-pointer ${locked ? 'bg-[#A28B7A]/30' : 'bg-[#D96C5B] text-white'}`} data-testid="upload-excel-btn">
+                <Upload size={12} /> Upload Excel
+                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={onLegacyExcel} disabled={locked || busy} />
+              </label>
+            </div>
+            <div className="bg-white border border-[#E8E2D9] rounded-lg p-3 text-xs space-y-1">
+              <p className="font-semibold mb-1">Per-statutory PDF slots</p>
+              {DOC_TYPES.map(d => (
+                <label key={d.key} className="text-[10px] cursor-pointer text-[#D96C5B] hover:underline block" data-testid={`upload-${d.key}-btn`}>
+                  + {d.label}
+                  <input type="file" accept=".pdf" className="hidden" onChange={(e) => { const f = e.target.files[0]; if (f) onLegacyPdf(d.key, { target: { files: [f], value: '' } }); }} disabled={locked || busy} />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 19 — Vendor Audit Phase-1 PIVOT (AI Smart Upload) verified end-to-end. Backend pytest 62/62 PASS (10 new tests in test_vendor_ai_extraction.py + 52 unchanged legacy in test_vendor_audit_e2e/rules/v3). Live-AI flow validated: GET /api/vendor-audit/meta/doc-types returns 7 statutory types incl. pf_ecr & esic_paid_challan; POST /upload-document accepts .xlsx/.pdf/.docx and rejects text/plain with 400; SHA-256 cache hit returns from_cache=true with cost_inr=0; GET /ai-documents strips file_b64; DELETE works; POST /run-ai requires >=1 doc (else 400) and produces ai_doc_count, ai_rows_count, totals + DOC001 'Missing document' findings for required-but-missing types (PF/ESIC); GET /cache/stats returns cached_extractions counter for admin. Validators unit verified valid/mismatch/unknown branches; combiner unit verified VENDOR_SHEET_COLUMNS row mapping. Frontend Playwright drove a fresh audit (AUG-2026 Maharashtra) end-to-end on the live preview URL: SmartUploadPanel hero ('Just upload your documents') + Auto-detect <select> (data-testid=ai-claimed-doc-type) + Upload document(s) button (ai-upload-btn) all rendered; uploaded /tmp/iter19_wage_iter19uniq.xlsx (5 KB wage register) → AI extracted 2 employees in ~12s with cost ₹0.13, ai-doc-{id} row showed filename + KB + 'detected: wage_register' + '2 employees' + status badge UNKNOWN (correct: wage_register is not one of the 7 statutory doc-types so validators report unknown — by design); run-ai-audit-cta clicked → page auto-switched to Findings tab showing 10 issues incl. 3 DOC001 missing-doc warnings (PF ECR, PF Paid Challan, ESIC Paid Challan) + 4 employee-level issues for Rahul S + 6 for Priya P; Audit Progress shows 3 steps (Upload Documents · Run AI Audit · Submit) with Upload + Run AI bars green after run; toggle-legacy-upload expanded the legacy panel and the original upload-excel-btn + upload-pf_ecr-btn re-appeared (backward compatibility intact); Module Switcher visible. Regression: Register Maker dashboard (rm-tab-overview) loads, HRMS admin dashboard ('Total Employees: 46') loads. Zero JS errors throughout.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend pytest test_vendor_ai_extraction.py 10/10 PASS in 14s (live Gemini Flash + Sonnet 4.5)",
+    "Backend pytest legacy 52/52 PASS in 12s (test_vendor_audit_e2e + rules + v3) — zero regression",
+    "Backend GET /api/vendor-audit/meta/doc-types returns 7 statutory types (pf_ecr, pf_challan, pf_paid_challan, esic_paid_challan, esic_contribution_history, pt_paid_challan, pt_return)",
+    "Backend POST /audits/{id}/upload-document accepts .xlsx, rejects .txt with 400, strips file_b64 in response, returns sha256 + extracted + validation{status,detected_type,message} + cost_inr",
+    "Backend Re-uploading same bytes → from_cache=True, cost_inr=0",
+    "Backend GET /audits/{id}/ai-documents lists docs without file_b64; DELETE removes one",
+    "Backend POST /run-ai with 0 docs returns 400; with >=1 doc returns ai_doc_count, ai_rows_count, totals, summary_findings with DOC001 'Missing document' entries",
+    "Backend GET /cache/stats returns {cached_extractions: N} for admin",
+    "Backend validators.py regex rules: pf_challan text → status=valid; same text claimed as esic_paid_challan → mismatch; unrelated text → unknown",
+    "Backend combiner.py turns wage_register extraction into VENDOR_SHEET_COLUMNS rows (UAN + FINAL GROSS EARNED filled)",
+    "Frontend SmartUploadPanel hero + ai-claimed-doc-type select + ai-upload-btn render on Upload tab",
+    "Frontend Live xlsx upload extracts 2 employees, badge shows ₹0.13 + 'detected: wage_register'",
+    "Frontend ai-doc-{id} row + ai-doc-del-{id} delete button render",
+    "Frontend run-ai-audit-cta visible at bottom of Upload tab once doc uploaded; clicking it runs audit + auto-switches to Findings tab",
+    "Frontend Findings tab shows DOC001 missing PF ECR + PF Paid Challan + ESIC Paid Challan warnings",
+    "Frontend Audit Progress shows 3 steps (Upload Documents · Run AI Audit · Submit) instead of legacy 4",
+    "Frontend toggle-legacy-upload expands collapsed legacy panel; upload-excel-btn + upload-pf_ecr-btn still functional (backward-compat preserved)",
+    "Frontend Module Switcher visible in top bar",
+    "Regression: /register-maker/dashboard loads with rm-tab-overview",
+    "Regression: /dashboard (HRMS admin) loads with 46 Total Employees, no JS errors"
+  ],
+  "failed_tests": [],
+  "test_report_links": [
+    "/app/backend/tests/test_vendor_ai_extraction.py",
+    "/app/backend/tests/test_vendor_audit_e2e.py",
+    "/app/backend/tests/test_vendor_audit_rules.py",
+    "/app/backend/tests/test_vendor_audit_v3.py",
+    "/app/test_reports/pytest/iter19_vendor_ai.xml",
+    "/app/test_reports/pytest/iter19_vendor_legacy.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "vendor_audit/ai_extraction.py — confirm Sonnet-4.5 fallback path is exercised (current 10 tests only hit Flash happy-path). Add a test that simulates Flash failure (e.g., env-flagged stub) so the fallback branch has coverage before GA.",
+    "vendor_audit/routes.py — POST /upload-document stores full file_b64 in Mongo per AI doc (same risk previously flagged for register_maker data sheets). 25 MB × N audits × N docs will balloon Mongo; plan GridFS/S3 migration before production rollout.",
+    "vendor_audit/validators.py — wage_register isn't in the 7 statutory doc-types catalog, so the SmartUpload status badge always shows UNKNOWN for wage registers (functionally fine, but UX-wise a 'Wage Register' green/info badge would be clearer than the orange 'UNKNOWN'). Consider adding a 'wage_register' detected-type label distinct from 'unknown'.",
+    "Frontend AuditRunPage.js — 'Findings tab also has run-ai-audit-btn' is satisfied only when audit hasn't yet been run; once status=audited the testid disappears (verified in this run). If a re-run-from-Findings-tab UX is intended, gate visibility on locked instead of audit status.",
+    "Backend cross-tenant SHA-256 cache (cache_lookup/save) — confirm cache key includes file bytes hash only and NOT org_id, otherwise the 'cross-tenant dedup' claim is false. Add a test that uploads identical bytes from two different tenants and verifies both hit cache.",
+    "Files >700 lines guideline: AuditRunPage.js + routes.py likely now exceed 700 lines after the SmartUploadPanel additions — split SmartUploadPanel into its own component file."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (62/62 pytest)", "frontend": "100% (all 14 review-request UI/integration assertions)"},
+  "test_credentials": "admin@hrms.com / admin123 (from /app/memory/test_credentials.md). Live-AI cost incurred: ~₹0.40 across pytest + UI run.",
+  "seed_data_creation": "Pytest fixture creates+deletes one AUG-2026 audit per session. UI test created audit_id=843fee1f-… (AUG-2026 Maharashtra under ACME Housekeeping) and deleted it via DELETE /audits/{id} at end. /tmp/iter19_wage_iter19uniq.xlsx left on disk (5213 bytes, harmless).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase-1 PIVOT (AI Smart Upload) is GREEN end-to-end. Canonical regression: /app/backend/tests/test_vendor_ai_extraction.py (10 cases, ~14s, ~₹0.20-0.40 live AI). Legacy 52-case pytest is unchanged. UI testids confirmed present on /vendor-audit/audits/{id}: smart-upload-panel, ai-claimed-doc-type, ai-upload-btn, ai-doc-{id}, ai-doc-del-{id}, run-ai-audit-cta, toggle-legacy-upload + preserved legacy upload-excel-btn / upload-pf_ecr-btn. Findings tab's run-ai-audit-btn only renders before audit has been run. wage_register validation badge is UNKNOWN by design (not a statutory doc type). Cross-tenant cache claim should be tested with a 2-tenant scenario before GA. No bugs found in this iteration.",
+  "rca of the issue": "No bugs found. All 14 review_request feature points are GREEN. Only minor UX nit: wage_register doc type is correctly extracted but rendered as UNKNOWN status because it's outside the 7-item statutory catalog used by validators.py — informational only, not a bug."
+}

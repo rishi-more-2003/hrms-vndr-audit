@@ -299,6 +299,16 @@ export const vendorAuditAPI = {
   startAudit: (data, contractorId) => api.post('/vendor-audit/audits/start' + (contractorId ? '?contractor_id=' + contractorId : ''), data),
   uploadExcel: (id, file) => { const fd = new FormData(); fd.append('file', file); return api.post(`/vendor-audit/audits/${id}/upload-excel`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   uploadPdf: (id, docType, file) => { const fd = new FormData(); fd.append('file', file); fd.append('doc_type', docType); return api.post(`/vendor-audit/audits/${id}/upload-pdf`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  // ── New AI extraction flow (replaces single-Excel template upload) ──
+  uploadDocumentAI: (id, file, claimedDocType) => {
+    const fd = new FormData(); fd.append('file', file);
+    if (claimedDocType) fd.append('claimed_doc_type', claimedDocType);
+    return api.post(`/vendor-audit/audits/${id}/upload-document`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  listAIDocuments: (id) => api.get(`/vendor-audit/audits/${id}/ai-documents`),
+  deleteAIDocument: (id, docId) => api.delete(`/vendor-audit/audits/${id}/ai-documents/${docId}`),
+  runAuditAI: (id) => api.post(`/vendor-audit/audits/${id}/run-ai`),
+  listDocTypes: () => api.get('/vendor-audit/meta/doc-types'),
   manualOverride: (id, docType, fieldPath, value) => api.put(`/vendor-audit/audits/${id}/manual-override`, { doc_type: docType, field_path: fieldPath, value }),
   runAudit: (id) => api.post(`/vendor-audit/audits/${id}/run`),
   submitAudit: (id) => api.post(`/vendor-audit/audits/${id}/submit`),

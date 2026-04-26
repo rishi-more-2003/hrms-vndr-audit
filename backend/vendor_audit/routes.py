@@ -23,6 +23,9 @@ from .rules import run_full_audit
 from .registers import build_pf_register, build_esic_register, build_pt_register
 from .email_service import send_email, tmpl_welcome
 from .scheduler import process_windows
+from .ai_extraction import extract_document, file_sha256, detect_kind
+from .combiner import combine_extractions
+from .validators import VALIDATION_RULES
 
 
 # ── Shared deps (Mongo, auth) — re-use server-level connection ──
@@ -344,6 +347,169 @@ async def upload_pdf(audit_id: str, doc_type: str = Form(...), file: UploadFile 
     # Strip pdf_b64 from response
     safe_doc = {k: v for k, v in docs[doc_type].items() if k != "pdf_b64"}
     return {"doc_type": doc_type, "document": safe_doc, "parsed": parsed}
+
+
+
+# ════════════════ AI EXTRACTION (new — replaces single-Excel template flow) ════════════════
+
+async def _cache_lookup(sha: str):
+    return await db.vendor_extraction_cache.find_one({"sha256": sha}, {"_id": 0})
+
+
+async def _cache_save(sha: str, payload: dict):
+    await db.vendor_extraction_cache.update_one(
+        {"sha256": sha},
+        {"$set": {"sha256": sha, **payload, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+
+@vendor_router.get("/meta/doc-types")
+async def list_doc_types():
+    """Public list of supported document types (used by upload UI)."""
+    return [{"key": k, "label": r.label} for k, r in VALIDATION_RULES.items()]
+
+
+@vendor_router.post("/audits/{audit_id}/upload-document")
+async def upload_document_ai(
+    audit_id: str,
+    file: UploadFile = File(...),
+    claimed_doc_type: Optional[str] = Form(None),
+    u=Depends(get_user),
+):
+    """Contractor uploads ANY document (.pdf/.xlsx/.docx). AI extracts + validates."""
+    block_if_preview(u)
+    a = await _load_audit(audit_id, u)
+    if not file.filename:
+        raise HTTPException(400, "Missing file name")
+    try:
+        kind = detect_kind(file.filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 25MB)")
+
+    try:
+        result = await extract_document(
+            content=content, file_name=file.filename,
+            claimed_doc_type=claimed_doc_type,
+            cache_lookup=_cache_lookup, cache_save=_cache_save,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Extraction failed: {str(e)[:200]}")
+
+    docs = a.get("ai_documents", {}) or {}
+    doc_id = str(uuid.uuid4())
+    docs[doc_id] = {
+        "id": doc_id,
+        "file_name": file.filename,
+        "file_kind": kind,
+        "file_size": len(content),
+        "claimed_doc_type": claimed_doc_type,
+        "detected_doc_type": result["extracted"].get("doc_type_detected"),
+        "validation": result["validation"],
+        "extracted": result["extracted"],
+        "model_used": result["model_used"],
+        "tokens_in": result["tokens_in"],
+        "tokens_out": result["tokens_out"],
+        "cost_inr": result["cost_inr"],
+        "from_cache": result["from_cache"],
+        "sha256": result["sha256"],
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "file_b64": base64.b64encode(content).decode(),
+    }
+    await db.audit_runs.update_one({"id": audit_id}, {"$set": {
+        "ai_documents": docs, "status": "uploaded",
+    }})
+    safe = {k: v for k, v in docs[doc_id].items() if k != "file_b64"}
+    return safe
+
+
+@vendor_router.get("/audits/{audit_id}/ai-documents")
+async def list_ai_documents(audit_id: str, u=Depends(get_user)):
+    a = await _load_audit(audit_id, u)
+    docs = a.get("ai_documents") or {}
+    out = []
+    for d in docs.values():
+        out.append({k: v for k, v in d.items() if k != "file_b64"})
+    out.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return out
+
+
+@vendor_router.delete("/audits/{audit_id}/ai-documents/{doc_id}")
+async def delete_ai_document(audit_id: str, doc_id: str, u=Depends(get_user)):
+    block_if_preview(u)
+    a = await _load_audit(audit_id, u)
+    docs = a.get("ai_documents") or {}
+    if doc_id not in docs:
+        raise HTTPException(404, "Document not found")
+    docs.pop(doc_id, None)
+    await db.audit_runs.update_one({"id": audit_id}, {"$set": {"ai_documents": docs}})
+    return {"ok": True}
+
+
+@vendor_router.post("/audits/{audit_id}/run-ai")
+async def run_audit_ai(audit_id: str, u=Depends(get_user)):
+    """Run audit using ONLY AI-extracted data from uploaded documents."""
+    block_if_preview(u)
+    a = await _load_audit(audit_id, u)
+    docs_map = a.get("ai_documents") or {}
+    docs = list(docs_map.values())
+    if not docs:
+        raise HTTPException(400, "Upload at least one document before running AI audit")
+
+    inputs = [{
+        "claimed_doc_type": d.get("claimed_doc_type"),
+        "extracted": d.get("extracted"),
+        "validation": d.get("validation"),
+        "file_name": d.get("file_name"),
+    } for d in docs]
+    rows, parsed_docs, combine_warnings = combine_extractions(inputs)
+
+    result = run_full_audit(rows, parsed_docs, a["wage_month"])
+    result["ai_combine_warnings"] = combine_warnings
+    result["ai_rows_count"] = len(rows)
+    result["ai_doc_count"] = len(docs)
+
+    REQUIRED = ["pf_ecr", "pf_paid_challan", "esic_paid_challan"]
+    # Build a set of all observed types — both claimed AND AI-detected
+    observed = set(parsed_docs.keys())
+    for d in docs:
+        if d.get("detected_doc_type"):
+            observed.add(d["detected_doc_type"])
+        if d.get("claimed_doc_type"):
+            observed.add(d["claimed_doc_type"])
+    missing = [r for r in REQUIRED if r not in observed]
+    result["missing_documents"] = missing
+    for mkey in missing:
+        label = VALIDATION_RULES[mkey].label if mkey in VALIDATION_RULES else mkey
+        result["summary_findings"].append({
+            "rule_code": "DOC001", "law": "DOCUMENT", "severity": "high",
+            "title": f"Missing document: {label}",
+            "detail": "Audit completed without this document. Upload it for full compliance.",
+            "expected": mkey, "actual": "missing",
+        })
+
+    await db.audit_runs.update_one({"id": audit_id}, {"$set": {
+        "rows": rows,
+        "parsed_documents": parsed_docs,
+        "audit_result": result,
+        "status": "audited",
+        "audited_at": datetime.now(timezone.utc).isoformat(),
+        "audit_mode": "ai",
+    }})
+    return result
+
+
+@vendor_router.get("/cache/stats")
+async def extraction_cache_stats(u=Depends(get_user)):
+    if u.get("role") not in ("platform_admin", "admin"):
+        raise HTTPException(403, "Admin only")
+    n = await db.vendor_extraction_cache.count_documents({})
+    return {"cached_extractions": n}
 
 
 @vendor_router.put("/audits/{audit_id}/manual-override")
