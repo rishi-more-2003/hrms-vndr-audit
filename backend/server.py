@@ -3675,10 +3675,12 @@ app.include_router(vendor_api)
 # Saffron SaaS — multi-module platform
 from saffron_saas import saas_router, platform_router, ensure_default_org, ensure_platform_admin
 from module_roles import module_role_router
+from register_maker import register_maker_router
 saffron_api = APIRouter(prefix="/api")
 saffron_api.include_router(saas_router)
 saffron_api.include_router(platform_router)
 saffron_api.include_router(module_role_router)
+saffron_api.include_router(register_maker_router)
 app.include_router(saffron_api)
 
 app.add_middleware(

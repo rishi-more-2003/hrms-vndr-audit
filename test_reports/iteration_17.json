@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 17 — Phase A Register Maker E2E test (backend + frontend). Backend pytest: 11/11 PASS (incl. live Gemini Flash AI study extracting 10 columns + 3 static fields with confidence 0.95 and ₹0.20 cost). Frontend Playwright E2E covered: admin login via /hrms/login, /register-maker/dashboard 3 tabs (rm-tab-overview/categories/templates), 4 stat tiles (rm-stat-categories/templates/ai-studied/ai-usage-so-far) with correct values, module-switcher-btn visible, Categories empty state CTA + New Category dialog (name/state/law/tags/desc) — created 'PYTEST UI Cat A' with Maharashtra + Minimum Wages Act + tags, Templates tab disabled state when no categories then enabled, Upload register template dialog (name/category/code/notes/file picker), real .xlsx upload, status badge transitioned to READY (₹0.20), TemplateDetailDialog showed FORM A badge + PER EMPLOYEE + MONTHLY + Confidence 95% + AI MODEL Gemini 3 Flash + TOKENS 1612 + COST ₹0.20 + 3 static fields with mappings + 10 data columns with type pills (NUMBER/TEXT/CURRENCY/DATE) + source hints + required ticks (rm-col-* count = 10). Stats refreshed live (cat=1, tpl=1, ai-studied=1, ai-usage=₹0.20). Cleanup of category + template successful. All 17 review_request cases verified GREEN.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RegisterMakerDashboard (Radix Select)", "issue": "Opening rm-cat-form-state / rm-cat-form-law / rm-tpl-form-category dropdowns triggers benign 'ResizeObserver loop completed with undelivered notifications' warnings, which CRA dev-mode webpack-dev-server-client-overlay turns into a full-screen red error overlay that intercepts pointer events in the preview environment. In production builds this overlay does not exist, but it makes manual QA on the preview URL noticeably worse and blocked our Playwright clicks until we injected CSS to hide #webpack-dev-server-client-overlay. Consider patching the ResizeObserver no-op (e.g., wrap the global ResizeObserver to swallow this single message) so the dev overlay stays clean.", "selector": "iframe#webpack-dev-server-client-overlay", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend: GET /api/register-maker/meta/reference returns 36 states + 26 laws (Maharashtra + Minimum Wages Act asserted)",
+    "Backend: Categories CRUD (POST/GET/PUT/DELETE) with org scoping",
+    "Backend: Non-admin priya@hrms.com gets 403 on /api/register-maker/categories",
+    "Backend: Unauthenticated 401/403",
+    "Backend: Invalid parent_id 400",
+    "Backend: Live Gemini Flash AI study — ai_status pending→studying→ready with ai_schema/ai_tokens_in/out/ai_cost_inr populated",
+    "Backend: file_b64 stripped from list and detail responses",
+    "Backend: invalid filetype (.txt) 400, invalid category 400",
+    "Backend: Category delete blocked 400 when templates exist",
+    "Backend: GET /api/register-maker/stats has categories/templates/templates_ready/ai_usage.total_cost_inr",
+    "Backend: estimate_inr unit test (Flash < ₹1, Sonnet > Flash, Sonnet < ₹5)",
+    "Frontend: admin /hrms/login → /dashboard → /register-maker/dashboard navigates correctly",
+    "Frontend: 3 tabs render with correct testids",
+    "Frontend: Hero panel + 4 stat tiles + Recent templates + 'How AI cost works' panel render on Overview",
+    "Frontend: Empty state with rm-cat-empty-cta when 0 categories; rm-cat-new visible after categories exist",
+    "Frontend: New Category dialog accepts state/law/tags/description; created card shows tag chips and template_count",
+    "Frontend: rm-tpl-new disabled when 0 categories, enabled when ≥1 category",
+    "Frontend: Upload dialog accepts .xlsx; status badge transitions Pending → AI studying → Ready with cost ₹0.20",
+    "Frontend: Detail dialog (rm-tpl-open-{id}) shows form code badge, row_type, period, confidence%, AI model/tokens/cost panel, 3 static fields list with source mappings, 10-column data table with NUMBER/TEXT/CURRENCY/DATE pills + source hints + required ticks; rm-col-{key} testids present (count 10)",
+    "Frontend: module-switcher-btn visible in top bar for admin (cross-module access)",
+    "Regression: HRMS dashboard, /vendor-audit/dashboard and /module-access load (verified via switcher availability)"
+  ],
+  "failed_tests": [],
+  "test_report_links": [
+    "/app/backend/tests/test_register_maker.py",
+    "/app/test_reports/pytest/iter17_register_maker.xml"
+  ],
+  "action_items": [
+    "MEDIUM: silence the benign ResizeObserver loop warning emitted by Radix Select on open (e.g., monkey-patch window.ResizeObserver to swallow that single error message) so the CRA dev-overlay does not block clicks during manual QA on the preview URL. Production builds are unaffected.",
+    "LOW: tighten review_request testid spec — code uses kebab-case for state/law/tags/etc. and underscore-case for module keys; keep one convention if possible (carryover note from iter16)."
+  ],
+  "critical_code_review_comments": [
+    "register_maker/routes.py upload_template stores full file_b64 in Mongo for every upload (15MB limit). For an org uploading 100 templates that's up to 1.5 GB in a Mongo collection. Consider GridFS or S3 once Phase A leaves preview.",
+    "register_maker/routes.py list_categories runs an aggregation per request; fine at 500-cat scale but flag as N+1 risk if categories grow.",
+    "_study_template_bg writes ai_status='studying' twice on restudy path (once in restudy_template before queueing, once at start of bg task). Idempotent but redundant — a single write is enough.",
+    "RegisterMakerDashboard.js is a single-file SPA; consider splitting into Categories/Templates/Detail components when Phase B lands to avoid ballooning past 700 lines.",
+    "Category delete returns 400 on FK violation with HTTPException — good UX, but the 'Cannot delete' message is parsed via substring match in tests; consider returning structured {code:'has_templates', count:n} for stable client handling."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all 7 frontend cases + regression)"},
+  "test_credentials": "admin@hrms.com/admin123, priya@hrms.com/priya123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "All PYTEST_-prefixed categories and templates created during this run were deleted at end of test (both pytest cleanup_at_end fixture and Playwright cleanup steps ran successfully). No leftover seed data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase A is GREEN end-to-end. Backend test_register_maker.py is the canonical regression suite. Live AI calls cost ~₹0.20 per upload. The webpack-dev-server-client-overlay is a CRA preview-only overlay triggered by Radix Select's ResizeObserver — does not affect production. Phase B (compatibility check + register generation) and Phase C (cross-tenant template library) are NOT yet built and explicitly out of scope. Final DB state: PYTEST data cleaned. Stats endpoint will read 0/0/0/₹0 for that org.",
+  "rca of the issue": "No bugs. Only environmental annoyance: CRA dev-overlay surfaces a benign Radix Select ResizeObserver warning. Mitigation: globally silence the specific ResizeObserver message via a tiny window.addEventListener('error',...) shim or wrap ResizeObserver constructor."
+}
