@@ -408,11 +408,28 @@ function EmptyState({ label }) {
 
 
 const VAL_STYLES = {
-  valid:    { color: '#7D9D85', label: 'Valid', icon: CheckCircle },
-  mismatch: { color: '#D96C5B', label: 'Mismatch', icon: Warning },
-  unknown:  { color: '#A28B7A', label: 'Unknown', icon: Info },
-  invalid:  { color: '#C65549', label: 'Invalid', icon: XCircle },
+  valid:       { color: '#7D9D85', label: 'Valid', icon: CheckCircle },
+  mismatch:    { color: '#D96C5B', label: 'Mismatch', icon: Warning },
+  unknown:     { color: '#A28B7A', label: 'Unknown', icon: Info },
+  invalid:     { color: '#C65549', label: 'Invalid', icon: XCircle },
+  ai_detected: { color: '#5A7BA8', label: 'AI detected', icon: CheckCircle },
 };
+
+// AI-extracted types not in the statutory regex catalog (handled as "ai_detected" UX)
+const AI_FRIENDLY_TYPES = new Set([
+  'wage_register', 'payroll_data', 'attendance_sheet', 'establishment_doc',
+]);
+
+function badgeStatus(d) {
+  const v = d.validation || {};
+  // If validators returned unknown but AI extracted high-confidence type → ai_detected
+  if (v.status === 'unknown') {
+    const ai = d.extracted?.doc_type_detected;
+    const conf = Number(d.extracted?.confidence || 0);
+    if (ai && AI_FRIENDLY_TYPES.has(ai) && conf >= 0.6) return 'ai_detected';
+  }
+  return v.status || 'unknown';
+}
 
 function SmartUploadPanel({ audit, locked, busy, onUpload, onDelete, onRunAudit, onLegacyExcel, onLegacyPdf }) {
   const [claimed, setClaimed] = React.useState('');
@@ -464,7 +481,7 @@ function SmartUploadPanel({ audit, locked, busy, onUpload, onDelete, onRunAudit,
         ) : (
           <div className="space-y-1.5">
             {sortedDocs.map(d => {
-              const meta = VAL_STYLES[d.validation?.status] || VAL_STYLES.unknown;
+              const meta = VAL_STYLES[badgeStatus(d)] || VAL_STYLES.unknown;
               const StatusIcon = meta.icon;
               const detected = d.detected_doc_type || d.extracted?.doc_type_detected;
               const detectedLabel = DOC_TYPES.find(t => t.key === detected)?.label || detected || 'unknown';
