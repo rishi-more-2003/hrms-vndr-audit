@@ -20,6 +20,21 @@ window.addEventListener("unhandledrejection", (e) => {
     e.preventDefault();
   }
 });
+// Wrap ResizeObserver itself so callbacks defer their work, eliminating the loop entirely.
+if (typeof window !== "undefined" && window.ResizeObserver) {
+  const NativeResizeObserver = window.ResizeObserver;
+  window.ResizeObserver = class extends NativeResizeObserver {
+    constructor(cb) {
+      super((entries, observer) => {
+        window.requestAnimationFrame(() => {
+          try { cb(entries, observer); } catch (err) {
+            if (!(err && RO_MSG.test(err.message || ""))) throw err;
+          }
+        });
+      });
+    }
+  };
+}
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(

@@ -17,12 +17,12 @@ Payroll, attendance, leave, employee self-service, 12-tab employee profile, Sala
 ### 2. Vendor Labour Audit ✅ — V1+V2+V3 complete
 Contractor portal, 7 PDF parsers (PF ECR / Challan / Paid / ESIC Contribution History / Paid / PT Paid / Return), employee-level rule engine (PF, ESIC, PT-MH, MLWF, Min Wages, Structure, Payment of Wages, cross-document), PF/ESIC/PT statutory registers, email outbox, auto audit windows (APScheduler daily), preview + impersonate.
 
-### 3. Register Maker 🟡 — Phase A (Apr 26, 2026) — AI schema learning live
-**Phase A complete**: User-defined hierarchical categories (state + law fixed dims + freeform tags) for grouping registers. Admin uploads BLANK register templates (.xlsx, .pdf, .docx). Hybrid AI pipeline (Gemini 3 Flash default → Claude Sonnet 4.5 fallback when confidence < 0.7) extracts a JSON schema with columns, headers, formulas, period basis. Schema preview UI shows confidence%, AI cost (~₹0.20-2/template), tokens used.
-- **Endpoints**: `/api/register-maker/{categories,templates,stats,meta/reference,templates/{id}/restudy}`
-- **Cost**: ~₹0.20-2 per template learned (one-time). Generation in Phase B will be ₹0.
-- **Phase B (next)**: Compatibility check vs uploaded master data sheet + actual register generation.
-- **Phase C (future)**: Cross-tenant template fingerprint library (zero-AI re-use).
+### 3. Register Maker 🟢 — Phase A + Phase B (Apr 26, 2026)
+**Phase A complete (Apr 26)**: Categories (state + law fixed dims + freeform tags) + template upload (.xlsx/.pdf/.docx). Hybrid Gemini Flash → Sonnet 4.5 fallback extracts JSON schema with columns, headers, formulas, period basis. Schema preview UI shows confidence + AI cost.
+**Phase B complete (Apr 26)**: Data sheet upload (multi-file, any of .xlsx/.pdf/.docx) → AI normalizes into employee/payroll records. Generation wizard lets admin pick data sheet(s) × register template(s); AI maps fields once per (template, data-fingerprint) — cached for ₹0 re-runs. Deterministic openpyxl filler preserves original .xlsx template formatting (or builds fresh xlsx for PDF/Word templates). Output is downloadable .xlsx with missing-fields warnings.
+- **Endpoints**: `/api/register-maker/{categories,templates,data-sources,generations,outputs/{id}/download,stats,meta/reference,templates/{id}/restudy}`
+- **Cost**: Phase A ~₹0.20-2/template (one-time). Phase B ~₹0.10-0.30/generation (mapping only). Generation itself ₹0.
+- **Phase C (next)**: Cross-tenant template fingerprint library + missing-fields auto-suggest.
 
 ### 4. Internal Labour Audit 🚧 — Stub (Coming Soon)
 Will continuously self-audit the tenant's own payroll & statutory compliance.
@@ -80,7 +80,8 @@ Will provide a ticket/document-vault system for labour-law queries (PF/ESIC/PT).
 - Frontend: E2E verified via testing_agent_v3_fork (iteration_16) — admin + employee logins on /hrms/login, Module Switcher shown for multi-module employees + hidden for single-module, ModuleRoute gates module dashboards correctly
 
 ## Recent Fixes
-- **Apr 26, 2026** — Register Maker Phase A: Hybrid Flash+Sonnet AI schema extraction. Categories + Templates + AI study + cost tracking. 11/11 backend tests + full frontend E2E green (iter17). +Silenced benign Radix ResizeObserver dev-overlay.
+- **Apr 26, 2026** — Register Maker Phase B: Data sheet upload (any .xlsx/.pdf/.docx) + AI data normalization + generation wizard (multi-data × multi-template) + deterministic openpyxl filling preserving template formatting + .xlsx download. 17/17 backend pytest + full frontend E2E green (iter18). Hardened ResizeObserver shim in index.js.
+- **Apr 26, 2026** — Register Maker Phase A: Hybrid Flash+Sonnet AI schema extraction. Categories + Templates + AI study + cost tracking. 11/11 backend tests + full frontend E2E green (iter17).
 - **Apr 24, 2026** — Cross-module RBAC frontend wiring (ModuleRoute replacing AdminRoute, ModuleSwitcher in Layout topbar, ModuleLoginPage no longer hardcodes login_as='admin').
 - **Apr 22, 2026** — Salary Template dialog scroll fix + compute guard.
 - **Apr 22, 2026** — Vendor Audit: `run_full_audit` falls back to audit-level wage_month.
