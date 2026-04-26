@@ -1,0 +1,59 @@
+{
+  "summary": "Iteration 18 — Phase B Register Maker (Data Sheets + Generation) verified end-to-end. Backend pytest 17/17 PASS in 30s (incl. live AI E2E: template upload + data sheet normalize + generation mapping via gemini-3-flash-preview + openpyxl xlsx fill + xlsx download). Backend extra HTTP checks (employee 403 on /data-sources & /generations GET+POST, empty-arrays 400, unknown-ids 400, stats has data_sources+generations counts, generation detail has merged_summary{records_count,available_fields,establishment,period}, /outputs/{id}/download returns application/vnd.openxmlformats-officedocument.spreadsheetml.sheet with Content-Disposition attachment; filename, size 5228 bytes) all PASS. Frontend Playwright E2E on /register-maker/dashboard verified: 5 tabs (rm-tab-overview/categories/templates/data/generate) render with correct testids, 6 stat tiles (rm-stat-categories=2 / templates=1 / ai-studied=1 / data-sheets=1 / generations=0→1 / ai-usage=₹0.20+), Data Sheets tab shows uploaded row (rm-ds-{id}) with Ready badge + '2 records · 10 fields · March 2026 · ₹0.08', rm-ds-new visible. Generate tab: rm-gen-new enabled when ready ds+tpl exist, dialog shows rm-gen-form-label + rm-gen-ds-list with rm-gen-ds-{id} checkbox + rm-gen-tpl-list with rm-gen-tpl-{id} checkbox, rm-gen-form-submit disabled before picks, enabled after both picks, button label updated to 'Generate 1 register'. After submit, GenerationRow rm-gen-{id} appears with status badge that transitioned to Ready (mapping_confidence + cost ₹0.06 displayed). Clicking rm-gen-open-{id} opened rm-gen-detail-dialog showing Source data summary panel ('2 record(s) merged from 1 data sheet(s)' + 'March 2026' + Available fields list), Generated registers section with rm-gen-result-{tpl_id} ('2 rows filled · mapped via gemini-3-flash-preview · ₹0.06'), missing-required warning rm-gen-missing-{tpl_id} listing serial_number/wage_period and Transforms applied. Clicking rm-gen-download-{tpl_id} triggered .xlsx download (5228 bytes, suggested name ITER18UI_Template.xlsx). Module Switcher visible. Phase A regression (categories/templates) intact. All 17 review_request feature points GREEN.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RegisterMakerDashboard (Radix Select on Categories/Templates dialogs)", "issue": "Carryover from iter17: Radix Select dropdowns emit a benign ResizeObserver loop warning that the CRA dev-overlay (webpack-dev-server-client-overlay) renders as a full-screen red overlay intercepting clicks in the preview environment. Production builds are unaffected. Mitigation in tests: monkey-patch window.ResizeObserver. Recommendation: add the same shim once globally (e.g., in index.js) so manual QA on the preview URL is not blocked.", "selector": "iframe#webpack-dev-server-client-overlay", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend pytest 17/17 PASS in 30s (incl. live AI generation E2E + xlsx download)",
+    "Backend POST /api/register-maker/data-sources accepts .xlsx, ai_status pending→ready, file_b64 stripped",
+    "Backend GET /data-sources lists with records_count + available_fields_count + period summary",
+    "Backend GET /data-sources/{id} returns full normalized doc",
+    "Backend DELETE /data-sources/{id} works",
+    "Backend POST /generations rejects empty arrays (400), rejects unknown ids (400), creates queued job, transitions to ready",
+    "Backend GET /generations/{id} merged_summary has records_count, available_fields, establishment, period; results[] has status, output_id, rows_written, missing_required, missing_optional, transforms, mapping_confidence/cost",
+    "Backend GET /outputs/{id}/download returns 200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet with Content-Disposition attachment header, 5228 bytes",
+    "Backend GET /stats includes data_sources + generations + categories + templates + templates_ready + ai_usage",
+    "Backend employee priya@hrms.com gets 403 on /data-sources and /generations (GET+POST)",
+    "Frontend admin login + nav to /register-maker/dashboard",
+    "Frontend 5 tabs visible (rm-tab-overview/categories/templates/data/generate)",
+    "Frontend 6 stat tiles visible (rm-stat-categories/templates/ai-studied/data-sheets/generations/ai-usage)",
+    "Frontend Data Sheets tab: Upload button (rm-ds-new) visible; uploaded row rm-ds-{id} shows Ready badge with records/fields/period",
+    "Frontend Generate tab: rm-gen-new enabled when ds+tpl ready; dialog has Label + 2 selection lists with rm-gen-ds-{id} & rm-gen-tpl-{id} checkboxes",
+    "Frontend Generate dialog: rm-gen-form-submit disabled before picks, enabled after both picks; button label 'Generate 1 register'",
+    "Frontend GenerationRow rm-gen-{id} appears, status polls to Ready",
+    "Frontend rm-gen-detail-dialog shows source data summary + generated registers list",
+    "Frontend rm-gen-result-{tpl_id} renders with rm-gen-download-{tpl_id} + rm-gen-missing-{tpl_id}",
+    "Frontend Download button triggers .xlsx download (5228 bytes)",
+    "Frontend Module Switcher visible in top bar"
+  ],
+  "failed_tests": [],
+  "test_report_links": [
+    "/app/backend/tests/test_register_maker.py",
+    "/app/test_reports/pytest/iter18_register_maker.xml",
+    "/tmp/iter18_extra.py"
+  ],
+  "action_items": [
+    "MEDIUM (carryover from iter17): silence the benign ResizeObserver loop warning emitted by Radix Select on open by wrapping window.ResizeObserver globally in index.js so the CRA dev-overlay does not block preview-URL clicks. Production unaffected."
+  ],
+  "critical_code_review_comments": [
+    "register_maker/routes.py — data sheets are stored full-bytes in Mongo (file_b64). 25 MB max per file × N tenants × 12 months will balloon Mongo. Move to GridFS/S3 before GA (same risk as Phase A templates).",
+    "register_maker/routes.py — list_data_sources / list_generations likely run per-doc shape transforms in Python; fine at <500 docs but flag as N+1 risk if data sheets per org grow.",
+    "register_maker/data_sources.py + generator.py + routes.py — together push routes.py to 685 lines and the dashboard SPA to 986 lines. Both are over the 700-line guideline. Recommend extracting DataSheetsTab + GenerateTab + GenerationDetailDialog into separate component files (note already raised in iter17 as well).",
+    "register_maker/generator.py — fill_xlsx_template's 'tolerant establishment lookup with synonyms' silently swallows mismatches. Worth logging which static fields fell back to synonyms so support can debug a tenant's wrong-name bug without re-running AI.",
+    "Frontend GenerationRow polls /generations/{id} every 4s indefinitely once visible; cap polling after status='ready' or 'failed' to avoid unbounded background traffic if user leaves dashboard open (verify in code).",
+    "Frontend RegisterMakerDashboard.js single file at 986 lines — split DataSheetsTab/GenerateTab/GenerationDetailDialog/DataSourceRow/GenerationRow into /components/register_maker/* before Phase C lands."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (17/17 pytest + 100% extra HTTP checks)", "frontend": "100% (all Phase B UI + regression cases)"},
+  "test_credentials": "admin@hrms.com/admin123, priya@hrms.com/priya123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "Seeded 1 category (ITER18UI Cat) + 1 template (ITER18UI Template) + 1 data sheet (ITER18UI Data Mar26) via API, then drove UI to create 1 generation. After test, cleanup script removed all ITER18-prefixed records: generations=1, data-sources=1, templates=1, categories=2 (incl. earlier curl-created 'ITER18 UI Cat'). Pytest cleanup_at_end fixture also removed all PYTEST_-prefixed records. Final DB state: 0 ITER/PYTEST records.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase B is GREEN end-to-end. Backend test_register_maker.py (17 cases) is the canonical regression. Live AI per generation: 1 mapping call ~₹0.06-0.10 (Flash). Phase A still GREEN. The webpack-dev-server-client-overlay annoyance is preview-only (carryover from iter17). Phase C (cross-tenant template library, missing-fields auto-suggest) is NOT yet built and out of scope. To re-run UI quickly: seed via /tmp/seed_iter18.py (~30s) then drive Generate tab; pytest cleanup_at_end fixture handles teardown.",
+  "rca of the issue": "No bugs found. Only carryover environmental annoyance: CRA dev-overlay surfaces a benign Radix Select ResizeObserver warning. Mitigation: wrap window.ResizeObserver in index.js to swallow that single message (already used in test scripts via add_init_script)."
+}

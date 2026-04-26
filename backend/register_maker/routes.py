@@ -1,11 +1,14 @@
-"""FastAPI router for Register Maker — Phase A endpoints."""
+"""FastAPI router for Register Maker — Phase A + Phase B endpoints."""
 from __future__ import annotations
 import asyncio
 import base64
 import hashlib
 import logging
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi.responses import Response
+from pydantic import BaseModel
 from datetime import datetime, timezone
 
 from saffron_saas import db, get_user
@@ -15,6 +18,8 @@ from .models import (
 )
 from .extractors import detect_kind, extract_any
 from .ai_schema import study_template
+from .data_sources import normalize_data_file, map_template_to_data
+from .generator import fill_xlsx_template, generate_fresh_xlsx
 
 logger = logging.getLogger(__name__)
 register_maker_router = APIRouter(prefix="/register-maker", tags=["register-maker"])
@@ -248,12 +253,389 @@ async def stats(u=Depends(get_user)):
         "templates": n_tpls,
         "templates_ready": n_ready,
         "templates_studying": n_tpls - n_ready,
+        "data_sources": await db.register_data_sources.count_documents({"organization_id": org_id}),
+        "generations": await db.register_generations.count_documents({"organization_id": org_id}),
         "ai_usage": {
             "tokens_in": totals.get("tokens_in", 0),
             "tokens_out": totals.get("tokens_out", 0),
             "total_cost_inr": round(totals.get("cost_inr", 0.0), 2),
         },
     }
+
+
+# ════════════════ PHASE B ════════════════
+
+# ──────────────── DATA SOURCES (uploaded data files) ────────────────
+async def _normalize_data_bg(data_source_id: str, file_bytes: bytes, file_name: str):
+    try:
+        await db.register_data_sources.update_one({"id": data_source_id}, {"$set": {"ai_status": "studying"}})
+        result = await normalize_data_file(file_bytes, file_name)
+        await db.register_data_sources.update_one({"id": data_source_id}, {"$set": {
+            "normalized": result["normalized"],
+            "raw_extract_kind": result["raw_extract_kind"],
+            "ai_status": "ready",
+            "ai_error": None,
+            "ai_tokens_in": result["tokens_in"],
+            "ai_tokens_out": result["tokens_out"],
+            "ai_cost_inr": result["cost_inr"],
+            "ai_model_used": result["model_used"],
+            "ai_escalated": result["escalated"],
+            "studied_at": datetime.now(timezone.utc).isoformat(),
+        }})
+    except Exception as e:
+        logger.exception("normalize_data_bg failed")
+        await db.register_data_sources.update_one({"id": data_source_id}, {"$set": {
+            "ai_status": "failed", "ai_error": str(e)[:500],
+        }})
+
+
+@register_maker_router.post("/data-sources")
+async def upload_data_source(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    label: Optional[str] = Form(None),
+    u=Depends(get_user),
+):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    try:
+        kind = detect_kind(file.filename or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 25MB)")
+    sha = hashlib.sha256(content).hexdigest()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "organization_id": org_id,
+        "uploaded_by": u["id"],
+        "label": label or (file.filename or f"data.{kind}"),
+        "file_name": file.filename or f"data.{kind}",
+        "file_kind": kind,
+        "file_size": len(content),
+        "file_b64": base64.b64encode(content).decode(),
+        "file_sha256": sha,
+        "normalized": None,
+        "ai_status": "pending",
+        "ai_error": None,
+        "ai_tokens_in": 0, "ai_tokens_out": 0, "ai_cost_inr": 0.0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "studied_at": None,
+    }
+    await db.register_data_sources.insert_one(doc)
+    background_tasks.add_task(_normalize_data_bg, doc["id"], content, file.filename or f"data.{kind}")
+    out = {k: v for k, v in doc.items() if k not in ("file_b64", "_id")}
+    return out
+
+
+@register_maker_router.get("/data-sources")
+async def list_data_sources(u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    items = await db.register_data_sources.find(
+        {"organization_id": org_id}, {"_id": 0, "file_b64": 0}
+    ).sort("created_at", -1).to_list(500)
+    # Strip large normalized payload from list view; expose only summary
+    for it in items:
+        norm = it.pop("normalized", None) or {}
+        it["records_count"] = len(norm.get("records") or [])
+        it["available_fields_count"] = len(norm.get("available_fields") or [])
+        it["normalized_period"] = norm.get("period") or {}
+    return items
+
+
+@register_maker_router.get("/data-sources/{ds_id}")
+async def get_data_source(ds_id: str, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    d = await db.register_data_sources.find_one({"id": ds_id, "organization_id": org_id}, {"_id": 0, "file_b64": 0})
+    if not d:
+        raise HTTPException(404, "Data source not found")
+    return d
+
+
+@register_maker_router.delete("/data-sources/{ds_id}")
+async def delete_data_source(ds_id: str, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    res = await db.register_data_sources.delete_one({"id": ds_id, "organization_id": org_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Data source not found")
+    return {"ok": True}
+
+
+# ──────────────── GENERATIONS (jobs that produce filled registers) ────────────────
+class GenerationCreate(BaseModel):
+    data_source_ids: List[str]
+    template_ids: List[str]
+    label: Optional[str] = None
+
+
+def _merge_data_sources(sources: list) -> dict:
+    """Combine multiple normalized data sources into one record set."""
+    records: list = []
+    available: set = set()
+    establishment: dict = {}
+    period: dict = {}
+    for s in sources:
+        norm = (s or {}).get("normalized") or {}
+        for r in (norm.get("records") or []):
+            records.append(r)
+        for f in (norm.get("available_fields") or []):
+            available.add(f)
+        # First non-empty establishment/period wins
+        if not establishment and norm.get("establishment"):
+            establishment = norm["establishment"]
+        if not period and norm.get("period"):
+            period = norm["period"]
+    return {
+        "records": records,
+        "available_fields": sorted(available),
+        "establishment": establishment,
+        "period": period,
+    }
+
+
+async def _run_generation_bg(generation_id: str):
+    try:
+        gen = await db.register_generations.find_one({"id": generation_id})
+        if not gen:
+            return
+        # Fetch data sources
+        ds_docs = await db.register_data_sources.find(
+            {"id": {"$in": gen["data_source_ids"]}, "organization_id": gen["organization_id"]}
+        ).to_list(50)
+        if not ds_docs:
+            await db.register_generations.update_one({"id": generation_id}, {"$set": {
+                "status": "failed", "error": "Data sources not found", "completed_at": datetime.now(timezone.utc).isoformat()
+            }})
+            return
+        # Wait for any pending data sources (max ~60s)
+        for _ in range(30):
+            pending = [d for d in ds_docs if d.get("ai_status") not in ("ready", "failed")]
+            if not pending:
+                break
+            await asyncio.sleep(2)
+            ds_docs = await db.register_data_sources.find(
+                {"id": {"$in": gen["data_source_ids"]}, "organization_id": gen["organization_id"]}
+            ).to_list(50)
+
+        merged = _merge_data_sources(ds_docs)
+
+        # Process each template
+        results: list = []
+        total_cost = 0.0
+        total_in = 0
+        total_out = 0
+        for tid in gen["template_ids"]:
+            tpl = await db.register_templates.find_one({"id": tid, "organization_id": gen["organization_id"]})
+            if not tpl:
+                results.append({"template_id": tid, "status": "failed", "error": "Template not found"})
+                continue
+            schema = tpl.get("ai_schema") or {}
+            if not schema or tpl.get("ai_status") != "ready":
+                results.append({"template_id": tid, "template_name": tpl.get("name"),
+                                "status": "failed", "error": "Template AI study not ready"})
+                continue
+
+            # Field mapping (cached by template×data fingerprint)
+            cache_key = hashlib.sha256(
+                (tid + "|" + "|".join(sorted([d["file_sha256"] for d in ds_docs if d.get("file_sha256")]))).encode()
+            ).hexdigest()
+            cached = await db.register_mappings.find_one({"cache_key": cache_key})
+            if cached:
+                mapping = cached["mapping"]
+                map_cost = 0.0
+                map_in = 0
+                map_out = 0
+                map_escalated = False
+                map_model = "cached"
+            else:
+                sample = (merged["records"][0] if merged["records"] else {})
+                map_result = await map_template_to_data(
+                    template_schema=schema,
+                    available_fields=merged["available_fields"],
+                    sample_record=sample.get("fields") if isinstance(sample, dict) else sample,
+                    establishment=merged["establishment"],
+                )
+                mapping = map_result["mapping"]
+                # Inject period for tolerant static lookup at fill time
+                if merged.get("period"):
+                    mapping["__period__"] = merged["period"]
+                map_cost = map_result["cost_inr"]
+                map_in = map_result["tokens_in"]
+                map_out = map_result["tokens_out"]
+                map_escalated = map_result["escalated"]
+                map_model = map_result["model_used"]
+                # Cache (excluding personal data)
+                await db.register_mappings.insert_one({
+                    "cache_key": cache_key,
+                    "template_id": tid,
+                    "organization_id": gen["organization_id"],
+                    "mapping": mapping,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+            total_cost += map_cost
+            total_in += map_in
+            total_out += map_out
+
+            # Filter records: only employee/payroll types
+            data_records = [
+                r for r in merged["records"]
+                if isinstance(r, dict) and r.get("record_type") in ("employee", "payroll", "attendance", None)
+            ] or merged["records"]
+
+            # Generate output
+            output_bytes: Optional[bytes] = None
+            gen_meta: dict = {}
+            try:
+                if tpl.get("file_kind") == "xlsx" and tpl.get("file_b64"):
+                    output_bytes, gen_meta = fill_xlsx_template(
+                        tpl["file_b64"], schema, mapping, data_records, merged["establishment"]
+                    )
+                else:
+                    output_bytes, gen_meta = generate_fresh_xlsx(
+                        schema, mapping, data_records, merged["establishment"], register_name=tpl.get("name") or "Register"
+                    )
+            except Exception as e:
+                logger.exception("fill failed")
+                results.append({"template_id": tid, "template_name": tpl.get("name"),
+                                "status": "failed", "error": f"Fill failed: {str(e)[:200]}"})
+                continue
+
+            output_id = str(uuid.uuid4())
+            await db.register_outputs.insert_one({
+                "id": output_id,
+                "generation_id": generation_id,
+                "template_id": tid,
+                "organization_id": gen["organization_id"],
+                "file_name": f"{(tpl.get('name') or 'register').replace(' ', '_')}_{datetime.now(timezone.utc).strftime('%Y%m')}.xlsx",
+                "file_b64": base64.b64encode(output_bytes).decode(),
+                "file_size": len(output_bytes),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+            results.append({
+                "template_id": tid,
+                "template_name": tpl.get("name"),
+                "status": "ready",
+                "output_id": output_id,
+                "rows_written": gen_meta.get("rows_written", 0),
+                "missing_required": (mapping or {}).get("missing_required") or [],
+                "missing_optional": (mapping or {}).get("missing_optional") or [],
+                "transforms": (mapping or {}).get("transforms") or {},
+                "mapping_confidence": (mapping or {}).get("confidence", 0),
+                "mapping_model": map_model,
+                "mapping_escalated": map_escalated,
+                "mapping_cost_inr": round(map_cost, 4),
+            })
+
+        await db.register_generations.update_one({"id": generation_id}, {"$set": {
+            "status": "ready",
+            "results": results,
+            "merged_summary": {
+                "records_count": len(merged["records"]),
+                "available_fields": merged["available_fields"],
+                "establishment": merged["establishment"],
+                "period": merged["period"],
+            },
+            "ai_tokens_in": total_in,
+            "ai_tokens_out": total_out,
+            "ai_cost_inr": round(total_cost, 4),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }})
+    except Exception as e:
+        logger.exception("generation failed")
+        await db.register_generations.update_one({"id": generation_id}, {"$set": {
+            "status": "failed", "error": str(e)[:500],
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }})
+
+
+@register_maker_router.post("/generations")
+async def create_generation(body: GenerationCreate, background_tasks: BackgroundTasks, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    if not body.data_source_ids:
+        raise HTTPException(400, "Pick at least one data source")
+    if not body.template_ids:
+        raise HTTPException(400, "Pick at least one register template")
+    # Validate ownership
+    n_ds = await db.register_data_sources.count_documents({
+        "id": {"$in": body.data_source_ids}, "organization_id": org_id
+    })
+    if n_ds != len(body.data_source_ids):
+        raise HTTPException(400, "One or more data sources not in your organization")
+    n_tpl = await db.register_templates.count_documents({
+        "id": {"$in": body.template_ids}, "organization_id": org_id
+    })
+    if n_tpl != len(body.template_ids):
+        raise HTTPException(400, "One or more templates not in your organization")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "organization_id": org_id,
+        "created_by": u["id"],
+        "data_source_ids": body.data_source_ids,
+        "template_ids": body.template_ids,
+        "label": body.label or f"Generation {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
+        "status": "queued",
+        "results": [],
+        "merged_summary": {},
+        "ai_tokens_in": 0, "ai_tokens_out": 0, "ai_cost_inr": 0.0,
+        "error": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+    }
+    await db.register_generations.insert_one(doc)
+    background_tasks.add_task(_run_generation_bg, doc["id"])
+    out = {k: v for k, v in doc.items() if k != "_id"}
+    return out
+
+
+@register_maker_router.get("/generations")
+async def list_generations(u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    items = await db.register_generations.find({"organization_id": org_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@register_maker_router.get("/generations/{gen_id}")
+async def get_generation(gen_id: str, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    g = await db.register_generations.find_one({"id": gen_id, "organization_id": org_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Generation not found")
+    return g
+
+
+@register_maker_router.delete("/generations/{gen_id}")
+async def delete_generation(gen_id: str, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    res = await db.register_generations.delete_one({"id": gen_id, "organization_id": org_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Generation not found")
+    # Cascade — delete outputs
+    await db.register_outputs.delete_many({"generation_id": gen_id, "organization_id": org_id})
+    return {"ok": True}
+
+
+@register_maker_router.get("/outputs/{output_id}/download")
+async def download_output(output_id: str, u=Depends(get_user)):
+    _require_admin_or_module_admin(u)
+    org_id = _org(u)
+    o = await db.register_outputs.find_one({"id": output_id, "organization_id": org_id})
+    if not o:
+        raise HTTPException(404, "Output not found")
+    raw = base64.b64decode(o["file_b64"])
+    headers = {"Content-Disposition": f'attachment; filename="{o["file_name"]}"'}
+    return Response(content=raw, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
 
 
 # ──────────────── REFERENCE DATA ────────────────

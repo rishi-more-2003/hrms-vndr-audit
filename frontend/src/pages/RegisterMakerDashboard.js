@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import {
   Plus, FolderSimple, FileText, Upload, Trash, ArrowsClockwise,
-  CheckCircle, Warning, Sparkle, X, CurrencyInr, Stack,
+  CheckCircle, Warning, Sparkle, X, CurrencyInr, Stack, Database, MagicWand,
+  DownloadSimple, Play,
 } from '@phosphor-icons/react';
 
 const API = process.env.REACT_APP_BACKEND_URL + '/api';
@@ -21,25 +22,32 @@ const STATUS_META = {
   studying: { label: 'AI studying…', color: '#E8B25C', icon: Sparkle },
   ready:    { label: 'Ready',     color: '#7D9D85', icon: CheckCircle },
   failed:   { label: 'Failed',    color: '#D96C5B', icon: Warning },
+  queued:   { label: 'Queued',    color: '#A28B7A', icon: ArrowsClockwise },
 };
 
 export default function RegisterMakerDashboard() {
-  const [tab, setTab] = useState('overview'); // overview | categories | templates
+  const [tab, setTab] = useState('overview'); // overview | categories | templates | data | generate
   const [stats, setStats] = useState(null);
   const [cats, setCats] = useState([]);
   const [tpls, setTpls] = useState([]);
   const [ref, setRef] = useState({ states: [], laws: [] });
-  const [openTpl, setOpenTpl] = useState(null); // template detail modal
+  const [dataSources, setDataSources] = useState([]);
+  const [generations, setGenerations] = useState([]);
+  const [openTpl, setOpenTpl] = useState(null);
+  const [openGen, setOpenGen] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [s, c, t, r] = await Promise.all([
+      const [s, c, t, r, d, g] = await Promise.all([
         axios.get(`${API}/register-maker/stats`, auth()),
         axios.get(`${API}/register-maker/categories`, auth()),
         axios.get(`${API}/register-maker/templates`, auth()),
         axios.get(`${API}/register-maker/meta/reference`, auth()),
+        axios.get(`${API}/register-maker/data-sources`, auth()),
+        axios.get(`${API}/register-maker/generations`, auth()),
       ]);
       setStats(s.data); setCats(c.data); setTpls(t.data); setRef(r.data);
+      setDataSources(d.data); setGenerations(g.data);
     } catch (e) {
       toast.error('Failed to load Register Maker data');
     }
@@ -47,13 +55,15 @@ export default function RegisterMakerDashboard() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Poll while any template is studying
+  // Poll while any item is studying / generating
   useEffect(() => {
-    const studying = tpls.some(t => t.ai_status === 'studying' || t.ai_status === 'pending');
-    if (!studying) return;
-    const id = setInterval(() => refresh(), 5000);
+    const busy = tpls.some(t => ['studying','pending'].includes(t.ai_status))
+      || dataSources.some(d => ['studying','pending'].includes(d.ai_status))
+      || generations.some(g => ['queued','running'].includes(g.status));
+    if (!busy) return;
+    const id = setInterval(() => refresh(), 4000);
     return () => clearInterval(id);
-  }, [tpls, refresh]);
+  }, [tpls, dataSources, generations, refresh]);
 
   return (
     <ModuleShell
@@ -64,17 +74,19 @@ export default function RegisterMakerDashboard() {
     >
       <div className="space-y-6">
         {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-[#E8E2D9]">
+        <div className="flex items-center gap-1 border-b border-[#E8E2D9] overflow-x-auto">
           {[
             { k: 'overview',   label: 'Overview' },
             { k: 'categories', label: `Categories${cats.length ? ` · ${cats.length}` : ''}` },
             { k: 'templates',  label: `Templates${tpls.length ? ` · ${tpls.length}` : ''}` },
+            { k: 'data',       label: `Data Sheets${dataSources.length ? ` · ${dataSources.length}` : ''}` },
+            { k: 'generate',   label: `Generate${generations.length ? ` · ${generations.length}` : ''}` },
           ].map(t => (
             <button
               key={t.k}
               onClick={() => setTab(t.k)}
               data-testid={`rm-tab-${t.k}`}
-              className={`px-4 py-2.5 text-sm font-medium transition border-b-2 ${
+              className={`px-4 py-2.5 text-sm font-medium transition border-b-2 whitespace-nowrap ${
                 tab === t.k ? 'border-[#D96C5B] text-[#2A2624]' : 'border-transparent text-[#6A625E] hover:text-[#2A2624]'
               }`}
             >{t.label}</button>
@@ -84,8 +96,11 @@ export default function RegisterMakerDashboard() {
         {tab === 'overview' && <OverviewTab stats={stats} cats={cats} tpls={tpls} onTpl={setOpenTpl} setTab={setTab} />}
         {tab === 'categories' && <CategoriesTab cats={cats} ref={ref} refresh={refresh} setTab={setTab} />}
         {tab === 'templates' && <TemplatesTab tpls={tpls} cats={cats} refresh={refresh} onTpl={setOpenTpl} />}
+        {tab === 'data' && <DataSheetsTab dataSources={dataSources} refresh={refresh} />}
+        {tab === 'generate' && <GenerateTab generations={generations} dataSources={dataSources} tpls={tpls} refresh={refresh} onGen={setOpenGen} />}
 
         <TemplateDetailDialog tpl={openTpl} cats={cats} onClose={() => setOpenTpl(null)} refresh={refresh} />
+        <GenerationDetailDialog gen={openGen} tpls={tpls} onClose={() => setOpenGen(null)} refresh={refresh} />
       </div>
     </ModuleShell>
   );
@@ -110,11 +125,13 @@ function OverviewTab({ stats, cats, tpls, onTpl, setTab }) {
       </div>
 
       {/* Stat tiles */}
-      <div className="grid md:grid-cols-4 gap-3">
+      <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatTile icon={FolderSimple} label="Categories" value={stats?.categories ?? 0} />
         <StatTile icon={Stack} label="Templates" value={stats?.templates ?? 0} />
         <StatTile icon={CheckCircle} label="AI-studied" value={stats?.templates_ready ?? 0} accent="#7D9D85" />
-        <StatTile icon={CurrencyInr} label="AI usage so far" value={`₹${(stats?.ai_usage?.total_cost_inr ?? 0).toFixed(2)}`} accent="#E8B25C" />
+        <StatTile icon={Database} label="Data sheets" value={stats?.data_sources ?? 0} accent="#3D5A85" />
+        <StatTile icon={MagicWand} label="Generations" value={stats?.generations ?? 0} accent="#A0532E" />
+        <StatTile icon={CurrencyInr} label="AI usage" value={`₹${(stats?.ai_usage?.total_cost_inr ?? 0).toFixed(2)}`} accent="#E8B25C" />
       </div>
 
       {/* Recent templates */}
@@ -583,3 +600,387 @@ function TemplateDetailDialog({ tpl, cats, onClose, refresh }) {
     </Dialog>
   );
 }
+
+
+// ─────────── Data Sheets ───────────
+function DataSheetsTab({ dataSources, refresh }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState([]);
+  const [label, setLabel] = useState('');
+
+  async function upload() {
+    if (!files.length) { toast.error('Pick at least one file'); return; }
+    setBusy(true);
+    try {
+      // Upload each file in sequence (small files; keep API server happy)
+      for (const f of files) {
+        const fd = new FormData();
+        fd.append('file', f);
+        if (label) fd.append('label', `${label} — ${f.name}`);
+        await axios.post(`${API}/register-maker/data-sources`, fd, {
+          headers: { ...auth().headers, 'Content-Type': 'multipart/form-data' },
+        });
+      }
+      toast.success(`Uploaded ${files.length} file${files.length > 1 ? 's' : ''} · AI extracting data…`);
+      setOpen(false); setFiles([]); setLabel('');
+      refresh();
+    } catch (e) { toast.error(e.response?.data?.detail || 'Upload failed'); }
+    setBusy(false);
+  }
+
+  async function del(d) {
+    if (!window.confirm(`Delete data sheet "${d.label || d.file_name}"?`)) return;
+    try {
+      await axios.delete(`${API}/register-maker/data-sources/${d.id}`, auth());
+      toast.success('Deleted'); refresh();
+    } catch (e) { toast.error('Failed'); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[#6A625E]">Upload payroll / employee / attendance data in any format. Saffron's AI normalizes it into a unified record set used for register generation.</p>
+        <Button onClick={() => setOpen(true)} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="rm-ds-new">
+          <Upload size={14} className="mr-1" /> Upload data sheet
+        </Button>
+      </div>
+
+      {dataSources.length === 0 ? (
+        <div className="bg-[#F9F6F0] rounded-xl p-12 text-center">
+          <Database size={32} className="text-[#A28B7A] mx-auto mb-2" />
+          <p className="text-sm text-[#6A625E]">No data sheets yet. Upload Excel, PDF, or Word files containing your employee/payroll data.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {dataSources.map(d => <DataSourceRow key={d.id} d={d} onDelete={del} />)}
+        </div>
+      )}
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Upload data sheet(s)</DialogTitle>
+            <DialogDescription>Excel, PDF, or Word files containing employee / payroll / attendance data. You can pick multiple at once.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Common label (optional)</Label>
+              <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. March 2026 Payroll" data-testid="rm-ds-form-label" />
+            </div>
+            <div>
+              <Label className="text-xs">Files *</Label>
+              <Input
+                type="file"
+                multiple
+                accept=".xlsx,.pdf,.docx"
+                onChange={e => setFiles(Array.from(e.target.files || []))}
+                data-testid="rm-ds-form-files"
+              />
+              {files.length > 0 && (
+                <div className="text-[11px] text-[#6A625E] mt-1 space-y-0.5">
+                  {files.map((f, i) => <div key={i}>• {f.name} · {(f.size / 1024).toFixed(1)} KB</div>)}
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={upload} disabled={busy} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="rm-ds-form-submit">
+              {busy ? 'Uploading…' : 'Upload & extract'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function DataSourceRow({ d, onDelete }) {
+  const meta = STATUS_META[d.ai_status] || STATUS_META.pending;
+  const StatusIcon = meta.icon;
+  return (
+    <div className="bg-white border border-[#E8E2D9] rounded-xl p-3 flex items-center gap-3" data-testid={`rm-ds-${d.id}`}>
+      <div className="w-9 h-9 rounded-lg bg-[#3D5A85]/10 flex items-center justify-center flex-shrink-0">
+        <Database size={16} className="text-[#3D5A85]" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-[#2A2624] truncate">{d.label || d.file_name}</p>
+        <p className="text-[11px] text-[#A28B7A] truncate">
+          {d.file_kind?.toUpperCase()} · {(d.file_size / 1024).toFixed(0)} KB
+          {d.ai_status === 'ready' && d.records_count > 0 ? ` · ${d.records_count} records · ${d.available_fields_count} fields` : ''}
+          {d.normalized_period?.label ? ` · ${d.normalized_period.label}` : ''}
+        </p>
+      </div>
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] uppercase font-bold" style={{ backgroundColor: `${meta.color}20`, color: meta.color }}>
+        <StatusIcon size={10} weight="fill" /> {meta.label}
+      </span>
+      {d.ai_cost_inr > 0 && <span className="text-[10px] text-[#6A625E]">₹{d.ai_cost_inr.toFixed(2)}</span>}
+      <button onClick={() => onDelete(d)} className="text-[#A28B7A] hover:text-[#D96C5B] p-1" data-testid={`rm-ds-del-${d.id}`}>
+        <Trash size={14} />
+      </button>
+    </div>
+  );
+}
+
+// ─────────── Generate ───────────
+function GenerateTab({ generations, dataSources, tpls, refresh, onGen }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pickedDS, setPickedDS] = useState([]);
+  const [pickedTpl, setPickedTpl] = useState([]);
+  const [label, setLabel] = useState('');
+
+  const readyDS = dataSources.filter(d => d.ai_status === 'ready');
+  const readyTpls = tpls.filter(t => t.ai_status === 'ready');
+
+  function toggle(arr, setter, id) {
+    setter(arr.includes(id) ? arr.filter(x => x !== id) : [...arr, id]);
+  }
+
+  async function start() {
+    if (!pickedDS.length || !pickedTpl.length) {
+      toast.error('Pick at least one data sheet AND one register'); return;
+    }
+    setBusy(true);
+    try {
+      await axios.post(`${API}/register-maker/generations`, {
+        data_source_ids: pickedDS,
+        template_ids: pickedTpl,
+        label: label || undefined,
+      }, auth());
+      toast.success('Generation queued · AI mapping then filling…');
+      setOpen(false); setPickedDS([]); setPickedTpl([]); setLabel('');
+      refresh();
+    } catch (e) { toast.error(e.response?.data?.detail || 'Failed'); }
+    setBusy(false);
+  }
+
+  async function del(g) {
+    if (!window.confirm(`Delete generation "${g.label}"?`)) return;
+    try {
+      await axios.delete(`${API}/register-maker/generations/${g.id}`, auth());
+      toast.success('Deleted'); refresh();
+    } catch (e) { toast.error('Failed'); }
+  }
+
+  const canStart = readyDS.length > 0 && readyTpls.length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[#6A625E]">Pick which data sheet(s) and which register(s) to generate. Output is downloadable Excel files.</p>
+        <Button
+          onClick={() => setOpen(true)}
+          disabled={!canStart}
+          className="bg-[#D96C5B] hover:bg-[#C25949] disabled:opacity-50"
+          data-testid="rm-gen-new"
+        >
+          <Play size={14} className="mr-1" weight="fill" /> New generation
+        </Button>
+      </div>
+
+      {!canStart && (
+        <div className="bg-[#FBE8D9]/50 border border-[#E8B25C]/30 rounded-xl p-3 text-xs text-[#6A625E] flex items-start gap-2">
+          <Warning size={14} className="text-[#E8B25C] mt-0.5" />
+          <span>You need at least one <b>ready</b> data sheet AND one <b>ready</b> register template. Currently: {readyDS.length} data sheet(s), {readyTpls.length} template(s) ready.</span>
+        </div>
+      )}
+
+      {generations.length === 0 ? (
+        <div className="bg-[#F9F6F0] rounded-xl p-12 text-center">
+          <MagicWand size={32} className="text-[#A28B7A] mx-auto mb-2" />
+          <p className="text-sm text-[#6A625E]">No generations yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {generations.map(g => <GenerationRow key={g.id} g={g} onClick={() => onGen(g)} onDelete={del} />)}
+        </div>
+      )}
+
+      {/* New generation dialog */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>New register generation</DialogTitle>
+            <DialogDescription>Pick the data sources and the register templates you want to fill. AI maps the fields once per combination — re-runs are free.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs">Label (optional)</Label>
+              <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. March 2026 statutory pack" data-testid="rm-gen-form-label" />
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase text-[#2A2624] mb-2">1. Pick data sheet(s) ({pickedDS.length} selected)</p>
+              <div className="border border-[#E8E2D9] rounded-lg max-h-44 overflow-y-auto" data-testid="rm-gen-ds-list">
+                {readyDS.length === 0 ? (
+                  <div className="p-3 text-xs text-[#A28B7A] text-center">No ready data sheets — go to Data Sheets tab.</div>
+                ) : readyDS.map(d => (
+                  <label key={d.id} className="flex items-start gap-2 p-2 hover:bg-[#F9F6F0] cursor-pointer border-b border-[#E8E2D9] last:border-0">
+                    <input type="checkbox" checked={pickedDS.includes(d.id)} onChange={() => toggle(pickedDS, setPickedDS, d.id)} data-testid={`rm-gen-ds-${d.id}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[#2A2624] truncate">{d.label || d.file_name}</p>
+                      <p className="text-[10px] text-[#A28B7A]">{d.records_count} records · {d.available_fields_count} fields{d.normalized_period?.label ? ` · ${d.normalized_period.label}` : ''}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase text-[#2A2624] mb-2">2. Pick register(s) to generate ({pickedTpl.length} selected)</p>
+              <div className="border border-[#E8E2D9] rounded-lg max-h-44 overflow-y-auto" data-testid="rm-gen-tpl-list">
+                {readyTpls.length === 0 ? (
+                  <div className="p-3 text-xs text-[#A28B7A] text-center">No ready templates — go to Templates tab.</div>
+                ) : readyTpls.map(t => (
+                  <label key={t.id} className="flex items-start gap-2 p-2 hover:bg-[#F9F6F0] cursor-pointer border-b border-[#E8E2D9] last:border-0">
+                    <input type="checkbox" checked={pickedTpl.includes(t.id)} onChange={() => toggle(pickedTpl, setPickedTpl, t.id)} data-testid={`rm-gen-tpl-${t.id}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[#2A2624] truncate">{t.name}</p>
+                      <p className="text-[10px] text-[#A28B7A]">{t.register_form_code || '—'} · {t.file_kind?.toUpperCase()}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={start} disabled={busy || !pickedDS.length || !pickedTpl.length} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="rm-gen-form-submit">
+              {busy ? 'Queuing…' : `Generate ${pickedTpl.length} register${pickedTpl.length === 1 ? '' : 's'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function GenerationRow({ g, onClick, onDelete }) {
+  const meta = STATUS_META[g.status] || STATUS_META.queued;
+  const StatusIcon = meta.icon;
+  const okCount = (g.results || []).filter(r => r.status === 'ready').length;
+  return (
+    <div className="bg-white border border-[#E8E2D9] rounded-xl p-3 flex items-center gap-3" data-testid={`rm-gen-${g.id}`}>
+      <div className="w-9 h-9 rounded-lg bg-[#A0532E]/10 flex items-center justify-center flex-shrink-0">
+        <MagicWand size={16} className="text-[#A0532E]" />
+      </div>
+      <button onClick={onClick} className="flex-1 min-w-0 text-left" data-testid={`rm-gen-open-${g.id}`}>
+        <p className="font-semibold text-[#2A2624] truncate">{g.label}</p>
+        <p className="text-[11px] text-[#A28B7A] truncate">
+          {(g.data_source_ids || []).length} data sheet(s) · {(g.template_ids || []).length} register(s)
+          {g.status === 'ready' ? ` · ${okCount} ready` : ''}
+          {g.ai_cost_inr > 0 ? ` · ₹${g.ai_cost_inr.toFixed(2)}` : ''}
+        </p>
+      </button>
+      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] uppercase font-bold" style={{ backgroundColor: `${meta.color}20`, color: meta.color }}>
+        <StatusIcon size={10} weight="fill" /> {meta.label}
+      </span>
+      <button onClick={() => onDelete(g)} className="text-[#A28B7A] hover:text-[#D96C5B] p-1" data-testid={`rm-gen-del-${g.id}`}>
+        <Trash size={14} />
+      </button>
+    </div>
+  );
+}
+
+function GenerationDetailDialog({ gen, tpls, onClose }) {
+  if (!gen) return null;
+
+  async function download(outputId, fname) {
+    try {
+      const r = await axios.get(`${API}/register-maker/outputs/${outputId}/download`, {
+        ...auth(), responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = fname || 'register.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { toast.error('Download failed'); }
+  }
+
+  return (
+    <Dialog open={!!gen} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="rm-gen-detail-dialog">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MagicWand size={18} /> {gen.label}
+            <button onClick={onClose} className="ml-auto text-[#A28B7A] hover:text-[#2A2624]"><X size={16} /></button>
+          </DialogTitle>
+          <DialogDescription>{new Date(gen.created_at).toLocaleString()} · status: {gen.status}</DialogDescription>
+        </DialogHeader>
+
+        {gen.status === 'queued' || gen.status === 'running' ? (
+          <div className="bg-[#E8B25C]/10 rounded-lg p-3 text-sm text-[#A0532E] flex items-center gap-2">
+            <Sparkle size={14} weight="fill" /> AI is mapping fields and filling registers — usually under 30 seconds.
+          </div>
+        ) : null}
+        {gen.error && (
+          <div className="bg-[#D96C5B]/10 rounded-lg p-3 text-sm text-[#A0532E] flex items-center gap-2">
+            <Warning size={14} weight="fill" /> {gen.error}
+          </div>
+        )}
+
+        {gen.merged_summary?.records_count !== undefined && (
+          <div className="bg-[#F9F6F0] rounded-xl p-4 text-xs">
+            <p className="font-bold text-[#2A2624] uppercase mb-1 text-xs">Source data summary</p>
+            <p>📋 {gen.merged_summary.records_count} record(s) merged from {(gen.data_source_ids || []).length} data sheet(s)</p>
+            {gen.merged_summary.establishment?.name && <p>🏢 {gen.merged_summary.establishment.name}</p>}
+            {gen.merged_summary.period?.label && <p>📅 {gen.merged_summary.period.label}</p>}
+            {(gen.merged_summary.available_fields || []).length > 0 && (
+              <p className="text-[#A28B7A] mt-1">Available fields: {(gen.merged_summary.available_fields || []).join(', ')}</p>
+            )}
+          </div>
+        )}
+
+        {(gen.results || []).length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase text-[#2A2624]">Generated registers ({(gen.results || []).length})</p>
+            {(gen.results || []).map((r, i) => {
+              const t = tpls.find(x => x.id === r.template_id);
+              return (
+                <div key={i} className="bg-white border border-[#E8E2D9] rounded-xl p-3" data-testid={`rm-gen-result-${r.template_id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-[#2A2624] truncate">{r.template_name || t?.name || r.template_id}</p>
+                      <p className="text-[11px] text-[#A28B7A]">
+                        {r.status === 'ready' ? `✓ ${r.rows_written} rows filled · mapped via ${r.mapping_model}` : `✗ ${r.error || r.status}`}
+                        {r.mapping_cost_inr > 0 ? ` · ₹${r.mapping_cost_inr.toFixed(2)}` : r.mapping_model === 'cached' ? ' · cached (₹0)' : ''}
+                      </p>
+                    </div>
+                    {r.status === 'ready' && r.output_id && (
+                      <Button
+                        onClick={() => download(r.output_id, `${(r.template_name || 'register').replace(/\s+/g, '_')}.xlsx`)}
+                        size="sm"
+                        className="bg-[#7D9D85] hover:bg-[#6A8A72] text-white"
+                        data-testid={`rm-gen-download-${r.template_id}`}
+                      >
+                        <DownloadSimple size={12} className="mr-1" /> Download
+                      </Button>
+                    )}
+                  </div>
+                  {(r.missing_required || []).length > 0 && (
+                    <div className="mt-2 bg-[#E8B25C]/10 border border-[#E8B25C]/30 rounded p-2 text-[11px]" data-testid={`rm-gen-missing-${r.template_id}`}>
+                      <p className="font-semibold text-[#A0532E]">⚠ Missing required fields ({r.missing_required.length})</p>
+                      <p className="text-[#6A625E]">{r.missing_required.join(', ')}</p>
+                      <p className="text-[#6A625E] mt-1">Tip: re-upload your data sheet with these columns added, then create a new generation.</p>
+                    </div>
+                  )}
+                  {(r.missing_optional || []).length > 0 && (
+                    <p className="mt-1 text-[10px] text-[#A28B7A]">Optional missing: {r.missing_optional.join(', ')}</p>
+                  )}
+                  {r.transforms && Object.keys(r.transforms).length > 0 && (
+                    <div className="mt-2 text-[10px] text-[#6A625E]">
+                      <span className="font-semibold">Transforms applied:</span>{' '}
+                      {Object.entries(r.transforms).map(([k, v]) => `${k}: ${v}`).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
