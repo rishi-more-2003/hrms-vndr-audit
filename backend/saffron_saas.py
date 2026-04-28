@@ -133,6 +133,103 @@ async def submit_contact(body: ContactLead):
     return {"ok": True, "message": "We'll get back to you within one business day."}
 
 
+# ══════════════════════════ DEMO / CONSULTANCY BOOKING ══════════════════════════
+class DemoRequest(BaseModel):
+    name: str
+    email: EmailStr
+    phone: str
+    company: str
+    designation: Optional[str] = None
+    company_size: Optional[str] = None         # "1-10", "11-50", "51-200", "201-500", "500+"
+    industry: Optional[str] = None
+    interested_modules: List[str] = []         # ["hrms","vendor_audit","register_maker","internal_audit","consultancy"]
+    request_type: str = "demo"                 # "demo" | "consultancy"
+    preferred_date: str                        # ISO date YYYY-MM-DD
+    preferred_slot: str                        # one of TIME_SLOTS keys
+    timezone: str = "Asia/Kolkata"
+    notes: Optional[str] = None
+    referral_source: Optional[str] = None      # "google","linkedin","referral","other"
+
+
+# Business hours: Mon–Sat, 10:00–18:00 IST. Saturdays we cap at 14:00.
+TIME_SLOTS_WEEKDAY = ["10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
+                      "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"]
+TIME_SLOTS_SATURDAY = ["10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30"]
+
+
+@saas_router.get("/demo-request/availability")
+async def demo_availability(date: str):
+    """Return open time slots for a given date. Public endpoint.
+
+    `date` = YYYY-MM-DD. Returns empty list for Sundays / past dates.
+    Already-booked slots are removed.
+    """
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    today = datetime.now(timezone.utc).date()
+    if d < today:
+        return {"date": date, "slots": [], "reason": "past"}
+    weekday = d.weekday()  # 0=Mon, 6=Sun
+    if weekday == 6:
+        return {"date": date, "slots": [], "reason": "closed_sunday"}
+    slots = TIME_SLOTS_SATURDAY if weekday == 5 else TIME_SLOTS_WEEKDAY
+    # Remove already-booked slots (simple double-booking guard)
+    booked = await db.demo_requests.find(
+        {"preferred_date": date, "status": {"$in": ["new", "scheduled", "confirmed"]}},
+        {"_id": 0, "preferred_slot": 1},
+    ).to_list(200)
+    booked_slots = {b["preferred_slot"] for b in booked}
+    open_slots = [s for s in slots if s not in booked_slots]
+    return {"date": date, "weekday": weekday, "slots": open_slots, "booked_count": len(booked_slots)}
+
+
+@saas_router.post("/demo-request")
+async def submit_demo_request(body: DemoRequest):
+    # Validate preferred_date is not in the past + slot is in our table
+    try:
+        d = datetime.strptime(body.preferred_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "preferred_date must be YYYY-MM-DD")
+    today = datetime.now(timezone.utc).date()
+    if d < today:
+        raise HTTPException(400, "Cannot book a slot in the past")
+    weekday = d.weekday()
+    if weekday == 6:
+        raise HTTPException(400, "We are closed on Sundays — please pick another day")
+    valid_slots = TIME_SLOTS_SATURDAY if weekday == 5 else TIME_SLOTS_WEEKDAY
+    if body.preferred_slot not in valid_slots:
+        raise HTTPException(400, "Selected time slot is not available on that day")
+    # Reject duplicate slot
+    clash = await db.demo_requests.find_one({
+        "preferred_date": body.preferred_date, "preferred_slot": body.preferred_slot,
+        "status": {"$in": ["new", "scheduled", "confirmed"]},
+    }, {"_id": 0, "id": 1})
+    if clash:
+        raise HTTPException(409, "That slot was just booked — please pick another one")
+
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["status"] = "new"            # new → scheduled → confirmed → completed | cancelled
+    doc["assigned_to"] = None
+    await db.demo_requests.insert_one(doc)
+    # Drop a copy in the legacy contact_leads stream too (for the existing leads dashboard)
+    legacy = {
+        "id": doc["id"],
+        "name": doc["name"], "email": doc["email"], "phone": doc.get("phone"),
+        "company": doc.get("company"), "message": doc.get("notes") or f"Demo requested for {body.preferred_date} {body.preferred_slot}",
+        "interested_modules": doc.get("interested_modules") or [],
+        "created_at": doc["created_at"], "status": "new",
+        "lead_type": "demo_request",
+    }
+    await db.contact_leads.insert_one(legacy)
+
+    return {"ok": True, "message": f"Booked! We'll confirm by email within 1 business day for {body.preferred_date} at {body.preferred_slot} IST.",
+            "id": doc["id"]}
+
+
 # ══════════════════════════ SELF-SERVE SIGNUP (14-day trial) ══════════════════════════
 class SignupRequest(BaseModel):
     company_name: str
@@ -302,6 +399,30 @@ async def update_lead(lead_id: str, body: dict, u=Depends(get_user)):
     return {"ok": True}
 
 
+@platform_router.get("/demo-requests")
+async def list_demo_requests(u=Depends(get_user), status: Optional[str] = None):
+    """List demo / consultancy bookings. Optional ?status=new|scheduled|confirmed|completed|cancelled."""
+    require_platform_admin(u)
+    q = {}
+    if status:
+        q["status"] = status
+    return await db.demo_requests.find(q, {"_id": 0}).sort("preferred_date", -1).to_list(500)
+
+
+@platform_router.put("/demo-requests/{req_id}")
+async def update_demo_request(req_id: str, body: dict, u=Depends(get_user)):
+    """Update status / assigned_to / internal notes on a demo request."""
+    require_platform_admin(u)
+    allowed = {k: v for k, v in body.items() if k in ("status", "assigned_to", "internal_notes")}
+    if not allowed:
+        raise HTTPException(400, "Nothing to update")
+    allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.demo_requests.update_one({"id": req_id}, {"$set": allowed})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Demo request not found")
+    return {"ok": True}
+
+
 @platform_router.get("/stats")
 async def platform_stats(u=Depends(get_user)):
     require_platform_admin(u)
@@ -309,10 +430,17 @@ async def platform_stats(u=Depends(get_user)):
     trial_orgs = await db.organizations.count_documents({"subscription_status": "trial"})
     active_orgs = await db.organizations.count_documents({"subscription_status": "active"})
     leads = await db.contact_leads.count_documents({"status": "new"})
+    new_demos = await db.demo_requests.count_documents({"status": "new"})
+    upcoming_demos = await db.demo_requests.count_documents({
+        "status": {"$in": ["new", "scheduled", "confirmed"]},
+        "preferred_date": {"$gte": datetime.now(timezone.utc).date().isoformat()},
+    })
     return {
         "total_organizations": total_orgs,
         "trial": trial_orgs, "active": active_orgs,
         "new_leads": leads,
+        "new_demo_requests": new_demos,
+        "upcoming_demos": upcoming_demos,
     }
 
 
