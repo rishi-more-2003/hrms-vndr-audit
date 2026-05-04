@@ -37,6 +37,7 @@ import InternalAuditDashboard from './pages/InternalAuditDashboard';
 import ConsultancyDashboard from './pages/ConsultancyDashboard';
 import PlatformAdminPage, { PlatformAdminLoginPage } from './pages/PlatformAdminPage';
 import ModuleAccessPage from './pages/ModuleAccessPage';
+import BookDemoPage from './pages/BookDemoPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -129,6 +130,7 @@ function AppRoutes() {
 
       {/* Saffron Services — SaaS landing + signup + branded module logins */}
       <Route path="/" element={<LandingPage />} />
+      <Route path="/book-demo" element={<BookDemoPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/login" element={<ModuleChooserPage />} />
       <Route path="/hrms/login" element={<PublicRoute><ModuleLoginPage moduleKey="hrms" /></PublicRoute>} />

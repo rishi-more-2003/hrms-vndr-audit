@@ -57,6 +57,7 @@ export default function LandingPage() {
             <a href="#contact" className="hover:text-[#D96C5B]">Contact</a>
           </div>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => nav('/book-demo')} className="hidden sm:inline-flex text-[#6A625E] hover:text-[#D96C5B]" data-testid="nav-book-demo-btn">Book a demo</Button>
             <Button size="sm" variant="outline" onClick={() => nav('/login')} data-testid="nav-login-btn">Sign in</Button>
             <Button size="sm" onClick={() => nav('/signup')} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="nav-signup-btn">Start Free Trial</Button>
           </div>
@@ -84,7 +85,10 @@ export default function LandingPage() {
             <Button size="lg" onClick={() => nav('/signup')} className="bg-[#D96C5B] hover:bg-[#C25949] h-12 px-6" data-testid="hero-signup-btn">
               Start 14-day Free Trial <ArrowRight size={16} className="ml-2" />
             </Button>
-            <Button size="lg" variant="outline" onClick={() => document.getElementById('modules').scrollIntoView({ behavior: 'smooth' })} className="h-12 px-6">
+            <Button size="lg" variant="outline" onClick={() => nav('/book-demo')} className="h-12 px-6" data-testid="hero-book-demo-btn">
+              Book a demo
+            </Button>
+            <Button size="lg" variant="ghost" onClick={() => document.getElementById('modules').scrollIntoView({ behavior: 'smooth' })} className="h-12 px-6 text-[#6A625E]">
               Explore Modules
             </Button>
           </div>
@@ -186,6 +190,11 @@ export default function LandingPage() {
             <div className="mt-8 space-y-2 text-sm text-white/70">
               <p><b>Email:</b> hello@saffronservices.in</p>
               <p><b>Response time:</b> Within 1 business day</p>
+            </div>
+            <div className="mt-6 p-4 rounded-xl bg-[#3B3432] border border-white/10">
+              <p className="text-xs uppercase tracking-widest text-[#E8B25C] font-bold mb-1">Prefer a live walkthrough?</p>
+              <p className="text-sm text-white/80 mb-3">Pick a 30-minute slot — we'll run a real audit on your data.</p>
+              <Button onClick={() => nav('/book-demo')} className="bg-[#D96C5B] hover:bg-[#C25949]" data-testid="contact-book-demo-btn">Book a demo</Button>
             </div>
           </div>
           <form onSubmit={submitContact} className="bg-[#3B3432] rounded-2xl p-6 space-y-3" data-testid="contact-form">
