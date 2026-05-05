@@ -1,0 +1,31 @@
+{
+  "summary": "Tested Fine-tuning Studio (platform-admin only) backend + frontend. 19/19 backend pytest tests pass; all frontend flows (pa-finetune-btn → ft-dashboard, 3 tabs, providers banner, dataset create, jobs no-key disabled state, eval empty state, back button) work as expected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_finetune.py",
+    "/app/test_reports/pytest/iter21_finetune.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes.py /finetune/datasets/{id}/upload calls the existing AI pipelines (extract_document, study_template, normalize_data_file). These have variable latency (10–60s); UI should show a clear loading state for the upload action — verify ft-ex-upload-btn shows a spinner/disabled state while AI bootstraps.",
+    "POST /finetune/jobs `cost_estimate = openai_ft.estimate_training_cost_usd(...)` is computed BEFORE the OpenAI upload — fine. But ensure costs are surfaced in UI before user confirms (a 'preview cost' step) to avoid surprise charges on the founder's key.",
+    "openai_ft.infer() uses temperature=0 and max_tokens=4096 with response_format=json_object — fixed across both base+ft. Good for deterministic eval, but fine-tuned models occasionally fail json_mode if not trained with JSON-only assistant turns; consider catching and falling back without json_mode.",
+    "scheduler.poll_inflight_jobs every 2 min — make sure it skips when OPENAI_API_KEY is unset; otherwise startup may log noisy errors. (Not blocking — verify by reading backend logs.)",
+    "tasks._flatten() canonicalises numeric strings by stripping commas — good. But booleans/None coerce to 'true'/'false'/'' before comparison; ensure ground-truth schema is aware (consistent with prod inference)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_finetune.py"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (all data-testids verified)"},
+  "test_credentials": "Platform admin: founder@saffronservices.in / saffron123. Regular admin (for 403): admin@hrms.com / admin123 with login_as=admin.",
+  "seed_data_creation": "Each test run creates and then deletes a TEST_ft_ds dataset (vendor_audit_extract). Frontend run created+deleted UI_TEST_dataset (register_schema) via the dashboard. No leftover data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "OPENAI_API_KEY is intentionally not set; ALL tests for the 'not configured' UX path pass. Once the user sets OPENAI_API_KEY=sk-... in /app/backend/.env and restarts backend: (1) /api/finetune/config will show providers.openai.configured=true, (2) Frontend Jobs tab will enable ft-new-job-btn and hide ft-jobs-no-key, (3) actually creating a job requires ≥10 approved non-holdout examples — upload PDFs/Excels via ft-ex-upload-btn, edit ground_truth, then approve. Eval requires a job that completed and produced fine_tuned_model + holdout examples. test_finetune.py is reusable as a regression suite.",
+  "rca of the issue": "N/A — no defects. Note: the playwright check for ft-datasets-list returning None is benign because by that point in the script we had already clicked into the dataset card (which navigates to detail view, replacing the list). Dataset creation was verified by (a) successful subsequent click into the dataset, (b) ft-ex-upload-btn becoming visible, and (c) the cleanup DELETE returning HTTP 200 with the actual dataset id."
+}

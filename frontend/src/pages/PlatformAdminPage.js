@@ -8,7 +8,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
-import { Leaf, SignOut, Buildings, Users, Envelope, Rocket, Check } from '@phosphor-icons/react';
+import { Leaf, SignOut, Buildings, Users, Envelope, Rocket, Check, Robot } from '@phosphor-icons/react';
 
 export function PlatformAdminLoginPage() {
   const nav = useNavigate();
@@ -105,7 +105,10 @@ export default function PlatformAdminPage() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#D96C5B] to-[#E8B25C] flex items-center justify-center"><Leaf size={14} weight="fill" color="white" /></div>
             <div><p className="text-[9px] uppercase tracking-[0.2em] text-[#D96C5B] font-bold">Platform Admin</p><p className="text-sm font-semibold" style={{ fontFamily: 'Outfit' }}>Saffron Services</p></div>
           </div>
+          <div className="flex items-center gap-1.5">
+          <Button size="sm" variant="ghost" className="text-white/70 hover:bg-white/10" onClick={() => nav('/platform-admin/finetune')} data-testid="pa-finetune-btn"><Robot size={14} className="mr-1" /> Fine-tune Studio</Button>
           <Button size="sm" variant="ghost" className="text-white/70 hover:bg-white/10" onClick={logout} data-testid="pa-logout"><SignOut size={14} className="mr-1" /> Logout</Button>
+          </div>
         </div>
       </header>
 

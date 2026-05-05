@@ -38,6 +38,7 @@ import ConsultancyDashboard from './pages/ConsultancyDashboard';
 import PlatformAdminPage, { PlatformAdminLoginPage } from './pages/PlatformAdminPage';
 import ModuleAccessPage from './pages/ModuleAccessPage';
 import BookDemoPage from './pages/BookDemoPage';
+import FineTuneDashboard from './pages/FineTuneDashboard';
 import '@/App.css';
 
 const PrivateRoute = ({ children, requiredModule }) => {
@@ -152,6 +153,7 @@ function AppRoutes() {
       {/* Platform admin */}
       <Route path="/platform-admin/login" element={<PublicRoute><PlatformAdminLoginPage /></PublicRoute>} />
       <Route path="/platform-admin" element={<PlatformAdminRoute><PlatformAdminPage /></PlatformAdminRoute>} />
+      <Route path="/platform-admin/finetune" element={<PlatformAdminRoute><FineTuneDashboard /></PlatformAdminRoute>} />
     </Routes>
   );
 }

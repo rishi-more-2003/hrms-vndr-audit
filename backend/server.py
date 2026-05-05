@@ -3676,11 +3676,13 @@ app.include_router(vendor_api)
 from saffron_saas import saas_router, platform_router, ensure_default_org, ensure_platform_admin
 from module_roles import module_role_router
 from register_maker import register_maker_router
+from finetune import finetune_router, poll_inflight_jobs
 saffron_api = APIRouter(prefix="/api")
 saffron_api.include_router(saas_router)
 saffron_api.include_router(platform_router)
 saffron_api.include_router(module_role_router)
 saffron_api.include_router(register_maker_router)
+saffron_api.include_router(finetune_router)
 app.include_router(saffron_api)
 
 app.add_middleware(
@@ -3708,6 +3710,19 @@ async def startup_event():
         start_scheduler(vendor_db)
     except Exception as e:
         logger.warning(f"Vendor audit scheduler not started: {e}")
+    # Start fine-tuning poller (every 2 minutes — refreshes in-flight OpenAI jobs)
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from apscheduler.triggers.interval import IntervalTrigger
+        ft_sched = AsyncIOScheduler(timezone="UTC")
+        async def _ft_poll():
+            try: await poll_inflight_jobs()
+            except Exception as e: logger.warning(f"Finetune poll error: {e}")
+        ft_sched.add_job(_ft_poll, IntervalTrigger(minutes=2), id="finetune_poll", replace_existing=True)
+        ft_sched.start()
+        logger.info("Finetune poller started (every 2 min)")
+    except Exception as e:
+        logger.warning(f"Finetune poller not started: {e}")
     # Seed Saffron platform (idempotent)
     try:
         await ensure_default_org()
